@@ -3,7 +3,9 @@ import type { ShaderMode } from '../../shaders/postprocess';
 import type { AltitudeBand } from '../layers/FlightLayer';
 import type { SatelliteCategory } from '../layers/SatelliteLayer';
 import type { GeoStatus } from '../../hooks/useGeolocation';
+import type { GraphQueryState } from '../../hooks/useGraphQuery';
 import MobileModal from './MobileModal';
+import QueryPanel from './QueryPanel';
 
 interface OperationsPanelProps {
   shaderMode: ShaderMode;
@@ -36,6 +38,7 @@ interface OperationsPanelProps {
   onLocateMe: () => void;
   geoStatus: GeoStatus;
   isMobile: boolean;
+  queryState?: GraphQueryState;
 }
 
 const SHADER_OPTIONS: { value: ShaderMode; label: string; colour: string }[] = [
@@ -90,6 +93,7 @@ export default function OperationsPanel({
   onLocateMe,
   geoStatus,
   isMobile,
+  queryState,
 }: OperationsPanelProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -149,6 +153,9 @@ export default function OperationsPanel({
           ))}
         </div>
       </div>
+
+      {/* Graph Query Section */}
+      {queryState && <QueryPanel queryState={queryState} isMobile={isMobile} />}
 
       {/* Data Layers Section */}
       <div className="p-3 border-b border-wv-border">

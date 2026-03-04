@@ -27,6 +27,8 @@ def initialize_indices(graph) -> None:
         "CREATE INDEX ON :CorrelationAlert(id)",
         "CREATE INDEX ON :CorrelationAlert(detectedAt)",
         "CREATE INDEX ON :CorrelationAlert(ruleType)",
+        "CREATE INDEX ON :QueryAudit(id)",
+        "CREATE INDEX ON :QueryAudit(timestamp)",
     ]
 
     for idx in indices:
@@ -56,6 +58,7 @@ def create_constraints(host: str, port: int, graph_name: str) -> None:
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE ConflictEvent PROPERTIES 1 id",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Vessel PROPERTIES 1 mmsi",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE CorrelationAlert PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE QueryAudit PROPERTIES 1 id",
     ]
 
     for cmd in constraints:

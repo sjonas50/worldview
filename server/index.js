@@ -1072,6 +1072,65 @@ app.get('/api/correlations', async (req, res) => {
   }
 });
 
+// ─── GraphRAG Natural Language Query (proxy to ingestion service) ──
+app.post('/api/query', async (req, res) => {
+  try {
+    const ingestionRes = await fetch('http://localhost:8000/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[QUERY] Proxy error:', err.message);
+    res.json({ error: err.message, answer: 'Query service unavailable' });
+  }
+});
+
+app.get('/api/query/status', async (_req, res) => {
+  try {
+    const ingestionRes = await fetch('http://localhost:8000/query/status');
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    res.json({ initialized: false, error: err.message });
+  }
+});
+
+// ─── Timeline Events (proxy to ingestion service) ─────────────
+app.get('/api/timeline', async (req, res) => {
+  try {
+    const params = new URLSearchParams(req.query).toString();
+    const ingestionRes = await fetch(`http://localhost:8000/timeline?${params}`);
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[TIMELINE] Proxy error:', err.message);
+    res.json({ error: err.message, events: [] });
+  }
+});
+
+// ─── Entity Trajectory (proxy to ingestion service) ───────────
+app.get('/api/trajectory/:entityType/:entityId', async (req, res) => {
+  try {
+    const { entityType, entityId } = req.params;
+    const params = new URLSearchParams(req.query).toString();
+    const ingestionRes = await fetch(
+      `http://localhost:8000/trajectory/${entityType}/${entityId}?${params}`
+    );
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[TRAJECTORY] Proxy error:', err.message);
+    res.json({ error: err.message, points: [] });
+  }
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',

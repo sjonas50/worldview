@@ -36,6 +36,9 @@ import { useCorrelationAlerts } from './hooks/useCorrelationAlerts';
 import { useGeolocation } from './hooks/useGeolocation';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useAudio } from './hooks/useAudio';
+import { useGraphQuery } from './hooks/useGraphQuery';
+import { useTimeline } from './hooks/useTimeline';
+import TimelinePanel from './components/ui/TimelinePanel';
 import type { ShaderMode } from './shaders/postprocess';
 import type { IntelFeedItem } from './components/ui/IntelFeed';
 import type { TrackedEntityInfo } from './components/globe/EntityClickHandler';
@@ -192,6 +195,9 @@ function App() {
   const { milFlights, feedItems: milFeedItems, isLoading: milLoading } = useMilFlights(layers.milFlights);
   const { events: conflictEvents, feedItems: conflictFeedItems, isLoading: conflictsLoading } = useConflictEvents(layers.conflicts);
   const { feedItems: corrFeedItems } = useCorrelationAlerts(true);
+  const graphQuery = useGraphQuery();
+  const { events: timelineEvents, isLoading: timelineLoading } = useTimeline(true);
+  const [timelineVisible, setTimelineVisible] = useState(false);
   const {
     cameras: cctvCameras,
     feedItems: cctvFeedItems,
@@ -270,8 +276,19 @@ function App() {
     return [...globalOnly, ...enrichedLive];
   }, [flightsGlobal, flightsLive]);
 
+  // Derive query feed items from GraphRAG results
+  const queryFeedItems: IntelFeedItem[] = graphQuery.results
+    .filter((r) => !r.error)
+    .slice(-5)
+    .map((r) => ({
+      id: `query-${r.timestamp}`,
+      time: new Date(r.timestamp).toISOString().slice(11, 19),
+      type: 'query' as const,
+      message: `Q: "${r.query.slice(0, 40)}" -> ${r.answer.slice(0, 80)}`,
+    }));
+
   // Combine intel feed items
-  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems, ...firmsFeedItems, ...milFeedItems, ...conflictFeedItems, ...corrFeedItems];
+  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems, ...firmsFeedItems, ...milFeedItems, ...conflictFeedItems, ...corrFeedItems, ...queryFeedItems];
 
   // Handlers
   const handleCameraChange = useCallback(
@@ -466,6 +483,7 @@ function App() {
         onLocateMe={() => { audio.play('click'); geoLocate(); }}
         geoStatus={geoStatus}
         isMobile={isMobile}
+        queryState={graphQuery}
       />
       <IntelFeed items={allFeedItems} isMobile={isMobile} />
       {layers.cctv && (
@@ -484,6 +502,13 @@ function App() {
           isMobile={isMobile}
         />
       )}
+      <TimelinePanel
+        events={timelineEvents}
+        isLoading={timelineLoading}
+        visible={timelineVisible}
+        onToggle={() => setTimelineVisible((v) => !v)}
+        isMobile={isMobile}
+      />
       <StatusBar
         camera={camera}
         shaderMode={shaderMode}

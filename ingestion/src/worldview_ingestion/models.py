@@ -88,3 +88,12 @@ class CorrelationAlert(BaseModel):
     source_entities: dict = {}
     thresholds: dict = {}
     data_sources: list[str] = []
+
+
+class QueryAudit(BaseModel):
+    id: str
+    query: str
+    answer: str
+    session_id: str
+    timestamp: int
+    model: str = ""

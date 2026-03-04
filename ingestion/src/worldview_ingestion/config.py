@@ -12,4 +12,9 @@ class Settings(BaseSettings):
     gdelt_poll_interval: int = 900
     correlation_interval: int = 60
 
+    # GraphRAG LLM config
+    llm_model: str = "anthropic/claude-sonnet-4-6"
+    llm_api_key: str = ""
+    graphrag_enabled: bool = True
+
     model_config = {"env_file": ".env", "extra": "ignore"}

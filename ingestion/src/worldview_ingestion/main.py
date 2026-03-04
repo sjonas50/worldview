@@ -9,8 +9,10 @@ Start with: uvicorn worldview_ingestion.main:app --host 0.0.0.0 --port 8000
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
+from pydantic import BaseModel as PydanticBaseModel
 
 from .config import Settings
 from .db import get_graph
@@ -21,6 +23,7 @@ from .ingestors.firms import ingest_firms
 from .ingestors.gdelt import ingest_gdelt
 from .ingestors.vessels import ingest_vessels
 from .correlations.engine import run_correlations
+from .graphrag_service import GraphRAGService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,6 +97,18 @@ async def lifespan(app: FastAPI):
     _locations = load_all_locations()
     await asyncio.to_thread(seed_locations, graph, _locations)
 
+    # Initialize GraphRAG service (non-blocking)
+    graphrag = GraphRAGService(settings)
+    app.state.graphrag = graphrag
+    try:
+        initialized = await asyncio.to_thread(graphrag.initialize)
+        if initialized:
+            logger.info("GraphRAG service ready")
+        else:
+            logger.warning("GraphRAG service not initialized (check LLM_API_KEY)")
+    except Exception as e:
+        logger.warning(f"GraphRAG init deferred: {e}")
+
     # Start background ingestion loops (each with its own interval)
     graph_args = (
         settings.falkordb_host,
@@ -124,8 +139,16 @@ async def lifespan(app: FastAPI):
         ),
     ]
 
+    # Session cleanup task for GraphRAG
+    async def _cleanup_graphrag_sessions():
+        while True:
+            await asyncio.sleep(300)
+            app.state.graphrag.cleanup_sessions()
+
+    tasks.append(asyncio.create_task(_cleanup_graphrag_sessions()))
+
     logger.info(
-        f"Started {len(tasks)} ingestion loops "
+        f"Started {len(tasks) - 1} ingestion loops + GraphRAG session cleaner "
         f"(mil={settings.mil_flight_poll_interval}s, "
         f"vessels={settings.vessel_poll_interval}s, "
         f"firms={settings.firms_poll_interval}s, "
@@ -145,9 +168,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="WorldView OSINT Ingestion",
     description="Knowledge graph ingestion service for the WorldView OSINT platform",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
+
+
+# ─── Health & Stats ────────────────────────────────────────────
 
 
 @app.get("/health")
@@ -194,10 +220,12 @@ async def stats():
             OPTIONAL MATCH (v:Vessel)
             WITH aircraft, locations, operators, hotspots, events, count(v) AS vessels
             OPTIONAL MATCH (ca:CorrelationAlert)
-            RETURN aircraft, locations, operators, hotspots, events, vessels, count(ca) AS correlations
+            WITH aircraft, locations, operators, hotspots, events, vessels, count(ca) AS correlations
+            OPTIONAL MATCH (qa:QueryAudit)
+            RETURN aircraft, locations, operators, hotspots, events, vessels, correlations, count(qa) AS queries
             """
         )
-        row = result.result_set[0] if result.result_set else [0] * 7
+        row = result.result_set[0] if result.result_set else [0] * 8
 
         return {
             "aircraft": row[0],
@@ -207,9 +235,13 @@ async def stats():
             "events": row[4],
             "vessels": row[5],
             "correlations": row[6],
+            "queries": row[7],
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+# ─── Correlation Alerts ────────────────────────────────────────
 
 
 @app.get("/correlations")
@@ -241,3 +273,184 @@ async def get_correlations(since: int = 0, limit: int = 50):
         return {"alerts": alerts}
     except Exception as e:
         return {"error": str(e), "alerts": []}
+
+
+# ─── GraphRAG Natural Language Query ──────────────────────────
+
+
+class QueryRequest(PydanticBaseModel):
+    query: str
+    session_id: str | None = None
+
+
+@app.post("/query")
+async def natural_language_query(request: QueryRequest):
+    """Natural language OSINT query against the knowledge graph."""
+    graphrag: GraphRAGService = app.state.graphrag
+    result = await asyncio.to_thread(
+        graphrag.query, request.query, request.session_id
+    )
+    return result
+
+
+@app.get("/query/status")
+async def query_status():
+    """Check if GraphRAG is initialized and ready."""
+    graphrag: GraphRAGService = app.state.graphrag
+    return {
+        "initialized": graphrag.is_initialized,
+        "model": settings.llm_model if graphrag.is_initialized else None,
+        "enabled": settings.graphrag_enabled,
+    }
+
+
+# ─── Timeline & Trajectory ────────────────────────────────────
+
+
+@app.get("/timeline")
+async def get_timeline(
+    since: int = 0,
+    until: int = 0,
+    entity_type: str | None = None,
+    limit: int = 100,
+):
+    """Return a timeline of graph events for the UI scrubber.
+
+    Aggregates: CorrelationAlert, ThermalAnomaly, ConflictEvent timestamps.
+    """
+    try:
+        graph = get_graph(
+            settings.falkordb_host, settings.falkordb_port, settings.falkordb_graph
+        )
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        if until == 0:
+            until = now_ms
+        if since == 0:
+            since = until - 86_400_000  # Default: last 24 hours
+
+        events = []
+
+        # Correlation alerts
+        if entity_type is None or entity_type == "correlation":
+            result = graph.query(
+                """
+                MATCH (a:CorrelationAlert)
+                WHERE a.detectedAt >= $since AND a.detectedAt <= $until
+                RETURN 'correlation' AS type, a.id AS id, a.summary AS summary,
+                       a.detectedAt AS timestamp, a.confidence AS detail
+                ORDER BY a.detectedAt DESC
+                LIMIT $limit
+                """,
+                {"since": since, "until": until, "limit": limit},
+            )
+            for row in result.result_set:
+                events.append({
+                    "type": row[0], "id": row[1], "summary": row[2],
+                    "timestamp": row[3], "detail": row[4],
+                })
+
+        # Thermal anomalies
+        if entity_type is None or entity_type == "thermal":
+            result = graph.query(
+                """
+                MATCH (t:ThermalAnomaly)
+                WHERE t.timestamp >= $since AND t.timestamp <= $until
+                RETURN 'thermal' AS type, t.id AS id,
+                       t.daynight AS summary,
+                       t.timestamp AS timestamp, t.confidence AS detail
+                ORDER BY t.timestamp DESC
+                LIMIT $limit
+                """,
+                {"since": since, "until": until, "limit": limit},
+            )
+            for row in result.result_set:
+                events.append({
+                    "type": row[0], "id": row[1], "summary": row[2],
+                    "timestamp": row[3], "detail": row[4],
+                })
+
+        # Conflict events
+        if entity_type is None or entity_type == "conflict":
+            result = graph.query(
+                """
+                MATCH (c:ConflictEvent)
+                WHERE c.timestamp >= $since AND c.timestamp <= $until
+                RETURN 'conflict' AS type, c.id AS id, c.name AS summary,
+                       c.timestamp AS timestamp, c.eventType AS detail
+                ORDER BY c.timestamp DESC
+                LIMIT $limit
+                """,
+                {"since": since, "until": until, "limit": limit},
+            )
+            for row in result.result_set:
+                events.append({
+                    "type": row[0], "id": row[1], "summary": row[2],
+                    "timestamp": row[3], "detail": row[4],
+                })
+
+        # Sort all events by timestamp descending
+        events.sort(key=lambda e: e["timestamp"], reverse=True)
+        return {"events": events[:limit], "since": since, "until": until}
+    except Exception as e:
+        return {"error": str(e), "events": []}
+
+
+@app.get("/trajectory/{entity_type}/{entity_id}")
+async def get_entity_trajectory(
+    entity_type: str,
+    entity_id: str,
+    since: int = 0,
+    limit: int = 500,
+):
+    """Return the historical trajectory of an aircraft or vessel.
+
+    Queries OBSERVED_AT edges with lat/lon/timestamp for plotting
+    a track line on the globe.
+    """
+    try:
+        graph = get_graph(
+            settings.falkordb_host, settings.falkordb_port, settings.falkordb_graph
+        )
+
+        if since == 0:
+            since = int(datetime.now(timezone.utc).timestamp() * 1000) - 86_400_000
+
+        if entity_type == "aircraft":
+            result = graph.query(
+                """
+                MATCH (a:Aircraft {hex: $id})-[obs:OBSERVED_AT]->(l:Location)
+                WHERE obs.timestamp >= $since
+                RETURN obs.lat, obs.lon, obs.alt, obs.heading, obs.speed,
+                       obs.timestamp, l.name
+                ORDER BY obs.timestamp ASC
+                LIMIT $limit
+                """,
+                {"id": entity_id, "since": since, "limit": limit},
+            )
+        elif entity_type == "vessel":
+            result = graph.query(
+                """
+                MATCH (v:Vessel {mmsi: $id})-[obs:OBSERVED_AT]->(l:Location)
+                WHERE obs.timestamp >= $since
+                RETURN obs.lat, obs.lon, 0, obs.heading, obs.sog,
+                       obs.timestamp, l.name
+                ORDER BY obs.timestamp ASC
+                LIMIT $limit
+                """,
+                {"id": entity_id, "since": since, "limit": limit},
+            )
+        else:
+            return {"error": f"Unsupported entity type: {entity_type}", "points": []}
+
+        points = []
+        for row in result.result_set:
+            points.append({
+                "lat": row[0], "lon": row[1], "alt": row[2],
+                "heading": row[3], "speed": row[4],
+                "timestamp": row[5], "location": row[6],
+            })
+
+        return {"entity_type": entity_type, "entity_id": entity_id, "points": points}
+    except Exception as e:
+        return {"error": str(e), "points": []}

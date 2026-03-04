@@ -4,7 +4,7 @@ import MobileModal from './MobileModal';
 interface IntelFeedItem {
   id: string;
   time: string;
-  type: 'flight' | 'seismic' | 'satellite' | 'system' | 'cctv' | 'ship' | 'firms' | 'milflight' | 'conflict' | 'correlation';
+  type: 'flight' | 'seismic' | 'satellite' | 'system' | 'cctv' | 'ship' | 'firms' | 'milflight' | 'conflict' | 'correlation' | 'query';
   message: string;
 }
 
@@ -19,6 +19,7 @@ const TYPE_STYLES: Record<string, string> = {
   milflight: 'text-[#F44336]',
   conflict: 'text-[#FFD600]',
   correlation: 'text-[#E040FB]',
+  query: 'text-[#00E5FF]',
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -32,6 +33,7 @@ const TYPE_LABELS: Record<string, string> = {
   milflight: 'MIL ',
   conflict: 'GDLT',
   correlation: 'CORR',
+  query: 'QRRY',
 };
 
 interface IntelFeedProps {
