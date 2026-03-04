@@ -32,6 +32,7 @@ import { useShips } from './hooks/useShips';
 import { useFIRMS } from './hooks/useFIRMS';
 import { useMilFlights } from './hooks/useMilFlights';
 import { useConflictEvents } from './hooks/useConflictEvents';
+import { useCorrelationAlerts } from './hooks/useCorrelationAlerts';
 import { useGeolocation } from './hooks/useGeolocation';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useAudio } from './hooks/useAudio';
@@ -190,6 +191,7 @@ function App() {
   const { hotspots: firmsHotspots, feedItems: firmsFeedItems, isLoading: firmsLoading } = useFIRMS(layers.firms);
   const { milFlights, feedItems: milFeedItems, isLoading: milLoading } = useMilFlights(layers.milFlights);
   const { events: conflictEvents, feedItems: conflictFeedItems, isLoading: conflictsLoading } = useConflictEvents(layers.conflicts);
+  const { feedItems: corrFeedItems } = useCorrelationAlerts(true);
   const {
     cameras: cctvCameras,
     feedItems: cctvFeedItems,
@@ -269,7 +271,7 @@ function App() {
   }, [flightsGlobal, flightsLive]);
 
   // Combine intel feed items
-  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems, ...firmsFeedItems, ...milFeedItems, ...conflictFeedItems];
+  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems, ...firmsFeedItems, ...milFeedItems, ...conflictFeedItems, ...corrFeedItems];
 
   // Handlers
   const handleCameraChange = useCallback(

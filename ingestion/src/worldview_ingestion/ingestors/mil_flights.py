@@ -7,44 +7,13 @@ Creates/updates:
 """
 
 import logging
-import math
 from datetime import datetime, timezone
 
 import httpx
 
+from ..utils import find_nearest_location
+
 logger = logging.getLogger("worldview-ingestion")
-
-# Earth radius in km for haversine
-_R = 6371.0
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate great-circle distance between two points in km."""
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlon / 2) ** 2
-    )
-    return _R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def _find_nearest_location(
-    lat: float, lon: float, locations: list[dict], max_km: float = 500.0
-) -> str | None:
-    """Find the nearest seeded Location within max_km. Returns location id or None."""
-    best_id = None
-    best_dist = max_km
-
-    for loc in locations:
-        dist = _haversine_km(lat, lon, loc["lat"], loc["lon"])
-        if dist < best_dist:
-            best_dist = dist
-            best_id = loc["id"]
-
-    return best_id
 
 
 def ingest_mil_flights(
@@ -128,7 +97,7 @@ def ingest_mil_flights(
     # --- Batch 2: Create OBSERVED_AT edges to nearest Location ---
     observations = []
     for f in valid:
-        nearest_id = _find_nearest_location(
+        nearest_id = find_nearest_location(
             f["latitude"], f["longitude"], locations
         )
         if nearest_id:

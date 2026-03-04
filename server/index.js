@@ -1055,6 +1055,23 @@ app.get('/api/ships', async (req, res) => {
 });
 
 /** Health check */
+// ─── Correlation Alerts (proxy to ingestion service) ─────────
+app.get('/api/correlations', async (req, res) => {
+  try {
+    const since = req.query.since || 0;
+    const limit = req.query.limit || 50;
+    const ingestionRes = await fetch(
+      `http://localhost:8000/correlations?since=${since}&limit=${limit}`
+    );
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[CORRELATIONS] Proxy error:', err.message);
+    res.json({ error: err.message, alerts: [] });
+  }
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',

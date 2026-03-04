@@ -17,6 +17,16 @@ def initialize_indices(graph) -> None:
         "CREATE INDEX ON :Location(id)",
         "CREATE INDEX ON :Location(type)",
         "CREATE INDEX ON :Operator(id)",
+        "CREATE INDEX ON :ThermalAnomaly(id)",
+        "CREATE INDEX ON :ThermalAnomaly(timestamp)",
+        "CREATE INDEX ON :ConflictEvent(id)",
+        "CREATE INDEX ON :ConflictEvent(timestamp)",
+        "CREATE INDEX ON :ConflictEvent(eventType)",
+        "CREATE INDEX ON :Vessel(mmsi)",
+        "CREATE INDEX ON :Vessel(lastSeen)",
+        "CREATE INDEX ON :CorrelationAlert(id)",
+        "CREATE INDEX ON :CorrelationAlert(detectedAt)",
+        "CREATE INDEX ON :CorrelationAlert(ruleType)",
     ]
 
     for idx in indices:
@@ -42,6 +52,10 @@ def create_constraints(host: str, port: int, graph_name: str) -> None:
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Aircraft PROPERTIES 1 hex",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Location PROPERTIES 1 id",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Operator PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE ThermalAnomaly PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE ConflictEvent PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Vessel PROPERTIES 1 mmsi",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE CorrelationAlert PROPERTIES 1 id",
     ]
 
     for cmd in constraints:
