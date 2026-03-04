@@ -391,10 +391,9 @@ function App() {
     altitudeFilter.low, altitudeFilter.ground,
   ]);
 
-  // Boot complete callback — starts ambient drone
+  // Boot complete callback
   const handleBootComplete = useCallback(() => {
     audio.play('bootComplete');
-    audio.startAmbient();
     setBooted(true);
   }, [audio]);
 
