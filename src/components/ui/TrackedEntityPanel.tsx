@@ -4,6 +4,9 @@ import type { TrackedEntityInfo } from '../globe/EntityClickHandler';
 interface TrackedEntityPanelProps {
   trackedEntity: TrackedEntityInfo | null;
   onUnlock?: () => void;
+  onShowTrail?: () => void;
+  trailLoading?: boolean;
+  trailVisible?: boolean;
   isMobile?: boolean;
 }
 
@@ -53,7 +56,7 @@ function flightAwareUrl(registration: string): string {
   return `https://www.flightaware.com/live/flight/${registration.replace(/-/g, '')}`;
 }
 
-export default function TrackedEntityPanel({ trackedEntity, onUnlock, isMobile = false }: TrackedEntityPanelProps) {
+export default function TrackedEntityPanel({ trackedEntity, onUnlock, onShowTrail, trailLoading, trailVisible, isMobile = false }: TrackedEntityPanelProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (!trackedEntity) return null;
@@ -174,15 +177,31 @@ export default function TrackedEntityPanel({ trackedEntity, onUnlock, isMobile =
           </div>
         )}
 
-        {/* Unlock button */}
-        <button
-          onClick={onUnlock}
-          className="mt-2 w-full text-[9px] font-mono uppercase tracking-wider text-wv-muted
-                     hover:text-wv-cyan border border-wv-cyan/20 hover:border-wv-cyan/50
-                     rounded px-2 py-1 transition-colors cursor-pointer"
-        >
-          Click empty space or press ESC to unlock
-        </button>
+        {/* Trail + Unlock buttons */}
+        <div className="mt-2 flex gap-2">
+          {onShowTrail && (trackedEntity.entityType === 'aircraft' || trackedEntity.entityType === 'ship') && (
+            <button
+              onClick={onShowTrail}
+              disabled={trailLoading}
+              className={`flex-1 text-[9px] font-mono uppercase tracking-wider
+                         border rounded px-2 py-1 transition-colors cursor-pointer
+                         ${trailVisible
+                           ? 'text-wv-cyan border-wv-cyan/50 bg-wv-cyan/10'
+                           : 'text-wv-muted border-wv-cyan/20 hover:text-wv-cyan hover:border-wv-cyan/50'
+                         }`}
+            >
+              {trailLoading ? 'Loading...' : trailVisible ? 'Hide Trail' : 'Show Trail'}
+            </button>
+          )}
+          <button
+            onClick={onUnlock}
+            className="flex-1 text-[9px] font-mono uppercase tracking-wider text-wv-muted
+                       hover:text-wv-cyan border border-wv-cyan/20 hover:border-wv-cyan/50
+                       rounded px-2 py-1 transition-colors cursor-pointer"
+          >
+            ESC to unlock
+          </button>
+        </div>
       </div>
     </div>
   );

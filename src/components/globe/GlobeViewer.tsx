@@ -42,8 +42,8 @@ interface GlobeViewerProps {
   children?: React.ReactNode;
 }
 
-// Default camera: Sydney, Australia — zoomed out to see the full globe
-const DEFAULT_POSITION = Cartesian3.fromDegrees(151.2093, -33.8688, 20_000_000);
+// Default camera: North America — zoomed out to see the full globe
+const DEFAULT_POSITION = Cartesian3.fromDegrees(-98.5795, 39.8283, 20_000_000);
 const DEFAULT_HEADING = CesiumMath.toRadians(0);
 const DEFAULT_PITCH = CesiumMath.toRadians(-90);
 

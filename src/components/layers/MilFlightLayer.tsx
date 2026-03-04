@@ -179,5 +179,59 @@ export default function MilFlightLayer({ milFlights, visible, isTracking }: MilF
     console.log(`[MIL-LAYER] Rendered ${milFlights.length} military aircraft`);
   }, [milFlights, visible, isTracking, createMilIcon]);
 
+  // Dead-reckoning: update billboard positions every frame for smooth movement
+  useEffect(() => {
+    if (!viewer || viewer.isDestroyed()) return;
+
+    let lastBulkUpdate = 0;
+
+    const onPreUpdate = () => {
+      const billboards = billboardsRef.current;
+      if (!billboards || !visible || billboards.length === 0) return;
+
+      const now = Date.now();
+      // Bulk-update all aircraft every 1 second (avoid per-frame overhead for all)
+      if (now - lastBulkUpdate < 1000) return;
+      lastBulkUpdate = now;
+
+      const flights = dataRef.current;
+      const stateMap = stateMapRef.current;
+
+      for (let i = 0; i < billboards.length && i < flights.length; i++) {
+        const flight = flights[i];
+        const state = stateMap.get(flight.hex);
+        if (!state) continue;
+
+        const dtSec = (now - state.lastUpdate) / 1000;
+        let lat = state.lat;
+        let lon = state.lon;
+
+        // Dead-reckon if we have heading + velocity and data is <120s old
+        if (
+          state.heading != null &&
+          state.velocity != null &&
+          state.velocity > 10 &&
+          dtSec > 0 &&
+          dtSec < 120
+        ) {
+          const headRad = CesiumMath.toRadians(state.heading);
+          lat += (Math.cos(headRad) * state.velocity * dtSec) / 111320;
+          const cosLat = Math.cos(lat * (Math.PI / 180)) || 0.0001;
+          lon += (Math.sin(headRad) * state.velocity * dtSec) / (111320 * cosLat);
+        }
+
+        const billboard = billboards.get(i);
+        billboard.position = Cartesian3.fromDegrees(lon, lat, state.alt);
+      }
+    };
+
+    viewer.scene.preUpdate.addEventListener(onPreUpdate);
+    return () => {
+      if (!viewer.isDestroyed()) {
+        viewer.scene.preUpdate.removeEventListener(onPreUpdate);
+      }
+    };
+  }, [viewer, visible]);
+
   return null; // Imperative rendering
 }

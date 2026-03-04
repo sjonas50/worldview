@@ -27,6 +27,7 @@ export interface TrackedEntityInfo {
   name: string;
   entityType: 'satellite' | 'aircraft' | 'ship' | 'earthquake' | 'cctv' | 'unknown';
   description: string;
+  entityId?: string; // Cesium entity ID (e.g., 'flight-AABBCC', 'ship-123456789')
 }
 
 /** Duck-type check: is this a CCTV CameraFeed object stored as billboard id? */
@@ -131,6 +132,7 @@ export default function EntityClickHandler({ onTrackEntity, onCctvClick }: Entit
         description: typeof entity.description?.getValue(viewer.clock.currentTime) === 'string'
           ? entity.description.getValue(viewer.clock.currentTime)
           : '',
+        entityId: entity.id,
       };
 
       // Set a sensible viewFrom offset so the camera arrives at a useful distance

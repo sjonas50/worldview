@@ -19,8 +19,9 @@ export interface SatellitePosition {
   satrec: any; // satellite.js TLE record for real-time frame-by-frame propagation
 }
 
-// Fetch via our backend proxy to avoid CelesTrak 403 on direct browser requests
-const SATELLITES_URL = '/api/satellites?group=stations';
+// Fetch multiple satellite groups for comprehensive coverage
+// stations: ISS/CSS, resource: Earth observation/imaging, weather: meteorological
+const SATELLITE_GROUPS = ['stations', 'resource', 'weather', 'geo'];
 const POLL_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
 const POSITION_INTERVAL = 2000;  // Update positions every 2 seconds
 const ORBIT_INTERVAL = 30_000;   // Recompute orbit paths every 30 seconds
@@ -62,19 +63,40 @@ export function useSatellites(enabled: boolean) {
   // Gate: only start position propagation once orbits have been computed
   const [orbitsReady, setOrbitsReady] = useState(false);
 
-  // Fetch TLE data with retry
+  // Fetch TLE data from multiple groups with retry
   const fetchTLEs = useCallback(async () => {
     if (!enabled) return;
 
     for (let attempt = 0; attempt <= TLE_FETCH_RETRIES; attempt++) {
       try {
-        const res = await fetch(SATELLITES_URL);
-        if (!res.ok) throw new Error(`Satellite proxy HTTP ${res.status}`);
-        const text = await res.text();
-        const tleEntries = parseTLEText(text);
-        if (tleEntries.length === 0) throw new Error('No valid TLEs parsed');
+        // Fetch all groups in parallel
+        const results = await Promise.allSettled(
+          SATELLITE_GROUPS.map(async (group) => {
+            const res = await fetch(`/api/satellites?group=${group}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status} for ${group}`);
+            return res.text();
+          })
+        );
 
-        satrecsRef.current = tleEntries.map(({ name, line1, line2 }) => {
+        // Merge and deduplicate by NORAD ID
+        const seenNorad = new Set<string>();
+        const allEntries: { name: string; line1: string; line2: string }[] = [];
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            for (const entry of parseTLEText(result.value)) {
+              const norad = entry.line2.substring(2, 7).trim();
+              if (!seenNorad.has(norad)) {
+                seenNorad.add(norad);
+                allEntries.push(entry);
+              }
+            }
+          }
+        }
+
+        if (allEntries.length === 0) throw new Error('No valid TLEs parsed from any group');
+
+        satrecsRef.current = allEntries.map(({ name, line1, line2 }) => {
           const satrec = twoline2satrec(line1, line2);
           return {
             name: name.trim(),
@@ -91,11 +113,11 @@ export function useSatellites(enabled: boolean) {
             id: `sat-load-${Date.now()}`,
             time: new Date().toISOString().slice(11, 19),
             type: 'satellite',
-            message: `${tleEntries.length} station satellites tracked`,
+            message: `${allEntries.length} satellites tracked (${SATELLITE_GROUPS.join(', ')})`,
           },
         ]);
 
-        console.info(`[SAT] Loaded ${tleEntries.length} TLEs (attempt ${attempt + 1})`);
+        console.info(`[SAT] Loaded ${allEntries.length} TLEs from ${SATELLITE_GROUPS.length} groups (attempt ${attempt + 1})`);
         return; // success — exit retry loop
       } catch (err) {
         console.warn(`[SAT] Fetch attempt ${attempt + 1} failed:`, err);

@@ -454,3 +454,40 @@ async def get_entity_trajectory(
         return {"entity_type": entity_type, "entity_id": entity_id, "points": points}
     except Exception as e:
         return {"error": str(e), "points": []}
+
+
+# ─── Satellite Passes (on-demand SGP4 computation) ───────────────
+
+from .satellite_passes import compute_passes as _compute_passes
+from .regions import list_regions as _list_regions
+
+
+@app.get("/satellite-passes")
+async def get_satellite_passes(
+    region: str = "iran",
+    hours: float = 24.0,
+    direction: str = "past",
+    group: str = "active",
+    step_minutes: float | None = None,
+    max_results: int = 200,
+):
+    """Compute satellite passes over a strategic region."""
+    hours = min(max(hours, 0.5), 72.0)
+    try:
+        return await _compute_passes(
+            region=region,
+            hours=hours,
+            direction=direction,
+            group=group,
+            step_minutes=step_minutes,
+            max_results=max_results,
+        )
+    except Exception as e:
+        logger.error("Satellite pass computation error: %s", e)
+        return {"error": str(e), "passes": []}
+
+
+@app.get("/satellite-passes/regions")
+async def get_available_regions():
+    """List all available strategic regions for satellite pass queries."""
+    return {"regions": _list_regions()}

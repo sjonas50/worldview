@@ -11,6 +11,7 @@ import ShipLayer from './components/layers/ShipLayer';
 import FIRMSLayer from './components/layers/FIRMSLayer';
 import MilFlightLayer from './components/layers/MilFlightLayer';
 import ConflictLayer from './components/layers/ConflictLayer';
+import TrajectoryLayer from './components/layers/TrajectoryLayer';
 import type { AltitudeBand } from './components/layers/FlightLayer';
 import type { SatelliteCategory } from './components/layers/SatelliteLayer';
 import OperationsPanel from './components/ui/OperationsPanel';
@@ -123,8 +124,8 @@ function App() {
 
   // State: camera position
   const [camera, setCamera] = useState({
-    latitude: -33.8688,
-    longitude: 151.2093,
+    latitude: 39.8283,
+    longitude: -98.5795,
     altitude: 50000,
     heading: 0,
     pitch: -45,
@@ -147,11 +148,48 @@ function App() {
 
   const handleTrackEntity = useCallback((info: TrackedEntityInfo | null) => {
     setTrackedEntity(info);
+    // Clear trajectory when entity changes
+    setTrajectoryPoints([]);
+    setTrajectoryVisible(false);
     // When tracking something else or clearing, clean up CCTV entity
     if (!info || info.entityType !== 'cctv') {
       cleanupCctvEntity();
     }
   }, [cleanupCctvEntity]);
+
+  /** Toggle trajectory trail for the currently tracked entity */
+  const handleShowTrail = useCallback(async () => {
+    if (!trackedEntity?.entityId) return;
+
+    // Toggle off if already visible
+    if (trajectoryVisible) {
+      setTrajectoryVisible(false);
+      setTrajectoryPoints([]);
+      return;
+    }
+
+    // Determine entity type and ID for the API call
+    let entityType: 'aircraft' | 'vessel' | null = null;
+    let entityId = '';
+
+    if (trackedEntity.entityType === 'aircraft' && trackedEntity.entityId) {
+      entityType = 'aircraft';
+      // Entity IDs follow pattern: 'flight-{hex}' or 'mil-{hex}'
+      entityId = trackedEntity.entityId.replace(/^(flight-|mil-)/, '');
+    } else if (trackedEntity.entityType === 'ship' && trackedEntity.entityId) {
+      entityType = 'vessel';
+      // Entity IDs follow pattern: 'ship-{mmsi}'
+      entityId = trackedEntity.entityId.replace(/^ship-/, '');
+    }
+
+    if (!entityType || !entityId) return;
+
+    setTrajectoryLoading(true);
+    const points = await fetchTrajectory(entityType, entityId);
+    setTrajectoryPoints(points);
+    setTrajectoryVisible(points.length > 0);
+    setTrajectoryLoading(false);
+  }, [trackedEntity, trajectoryVisible, fetchTrajectory]);
 
   const handleViewerReady = useCallback((viewer: CesiumViewer) => {
     viewerRef.current = viewer;
@@ -163,7 +201,7 @@ function App() {
     viewer.trackedEntity = undefined;
     setTrackedEntity(null);
     viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(151.2093, -33.8688, 20_000_000),
+      destination: Cartesian3.fromDegrees(-98.5795, 39.8283, 20_000_000),
       orientation: {
         heading: CesiumMath.toRadians(0),
         pitch: CesiumMath.toRadians(-90),
@@ -196,8 +234,13 @@ function App() {
   const { events: conflictEvents, feedItems: conflictFeedItems, isLoading: conflictsLoading } = useConflictEvents(layers.conflicts);
   const { feedItems: corrFeedItems } = useCorrelationAlerts(true);
   const graphQuery = useGraphQuery();
-  const { events: timelineEvents, isLoading: timelineLoading } = useTimeline(true);
+  const { events: timelineEvents, isLoading: timelineLoading, fetchTrajectory } = useTimeline(true);
   const [timelineVisible, setTimelineVisible] = useState(false);
+
+  // Trajectory trail state
+  const [trajectoryPoints, setTrajectoryPoints] = useState<import('./hooks/useTimeline').TrajectoryPoint[]>([]);
+  const [trajectoryLoading, setTrajectoryLoading] = useState(false);
+  const [trajectoryVisible, setTrajectoryVisible] = useState(false);
   const {
     cameras: cctvCameras,
     feedItems: cctvFeedItems,
@@ -457,11 +500,22 @@ function App() {
           visible={layers.conflicts}
           isTracking={!!trackedEntity}
         />
+        <TrajectoryLayer
+          points={trajectoryPoints}
+          visible={trajectoryVisible}
+          color={trackedEntity?.entityType === 'ship' ? '#00E5FF' : '#F44336'}
+        />
       </GlobeViewer>
 
       {/* Tactical UI Overlay */}
       <Crosshair />
-      <TrackedEntityPanel trackedEntity={trackedEntity} isMobile={isMobile} />
+      <TrackedEntityPanel
+        trackedEntity={trackedEntity}
+        onShowTrail={handleShowTrail}
+        trailLoading={trajectoryLoading}
+        trailVisible={trajectoryVisible}
+        isMobile={isMobile}
+      />
       <OperationsPanel
         shaderMode={shaderMode}
         onShaderChange={(mode) => { audio.play('shaderSwitch'); setShaderMode(mode); }}

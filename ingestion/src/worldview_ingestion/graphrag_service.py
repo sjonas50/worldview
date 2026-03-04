@@ -6,14 +6,18 @@ Wraps graphrag_sdk to provide:
 - Query execution with provenance recording
 """
 
+import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
 
 from .config import Settings
 from .db import get_graph
+from .regions import ALIASES, REGIONS, resolve_region
+from .satellite_passes import compute_passes
 
 logger = logging.getLogger("worldview-ingestion")
 
@@ -129,9 +133,8 @@ class GraphRAGService:
         return self._initialized
 
     # Data types NOT in the knowledge graph (frontend-only)
+    # Note: "satellite" and "orbit" are handled by _check_satellite_pass_query()
     _NON_GRAPH_KEYWORDS = {
-        "satellite": "Satellites are tracked via TLE/SGP4 propagation in the browser only, not stored in the knowledge graph.",
-        "orbit": "Satellite orbital data is propagated client-side via SGP4, not stored in the knowledge graph.",
         "earthquake": "Earthquake data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
         "seismic": "Seismic data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
         "cctv": "CCTV camera feeds are fetched directly from TfL/Austin/NSW APIs in the browser, not stored in the knowledge graph.",
@@ -151,6 +154,150 @@ class GraphRAGService:
                 )
         return None
 
+    def _check_satellite_pass_query(self, question: str) -> str | None:
+        """Detect satellite pass queries, compute passes, return formatted answer.
+
+        Returns formatted markdown answer, or None if not a satellite query.
+        """
+        q_lower = question.lower()
+
+        # Must mention satellites
+        sat_keywords = ("satellite", "orbit", "overfly", "overflight")
+        if not any(kw in q_lower for kw in sat_keywords):
+            return None
+
+        # Check for pass/overfly concept or a known region
+        pass_keywords = (
+            "pass", "over", "above", "coverage", "overfl",
+            "flew", "fly", "visible", "track", "monitor",
+        )
+        has_pass_concept = any(kw in q_lower for kw in pass_keywords)
+
+        # Try to find a region in the query
+        detected_region: str | None = None
+        for region_key in REGIONS:
+            readable = region_key.replace("_", " ")
+            if readable in q_lower or region_key in q_lower:
+                detected_region = region_key
+                break
+        if detected_region is None:
+            for alias, canonical in ALIASES.items():
+                if alias in q_lower:
+                    detected_region = canonical
+                    break
+
+        if detected_region is None or not has_pass_concept:
+            region_list = ", ".join(sorted(REGIONS.keys())[:12])
+            return (
+                "I can compute satellite passes over strategic regions using SGP4 propagation. "
+                "Try asking: 'What satellites passed over [region] in the last [N] hours?'\n\n"
+                f"Available regions: {region_list}, ..."
+            )
+
+        # Parse time window
+        hours = 24.0
+        direction = "past"
+
+        past_match = re.search(
+            r"(?:last|past|previous)\s+(\d+\.?\d*)\s*(?:hour|hr|h|day)",
+            q_lower,
+        )
+        if past_match:
+            val = float(past_match.group(1))
+            if "day" in past_match.group(0):
+                val *= 24
+            hours = val
+            direction = "past"
+
+        future_match = re.search(
+            r"(?:next|coming|upcoming|future)\s+(\d+\.?\d*)\s*(?:hour|hr|h|day)",
+            q_lower,
+        )
+        if future_match:
+            val = float(future_match.group(1))
+            if "day" in future_match.group(0):
+                val *= 24
+            hours = val
+            direction = "future"
+
+        # Detect satellite group
+        group = "active"
+        if "weather" in q_lower:
+            group = "weather"
+        elif "gps" in q_lower:
+            group = "gps"
+        elif "starlink" in q_lower:
+            group = "starlink"
+        elif "station" in q_lower or "iss" in q_lower:
+            group = "stations"
+        elif "military" in q_lower:
+            group = "military"
+
+        hours = min(max(hours, 0.5), 72.0)
+
+        # Run async computation from sync context (we're in asyncio.to_thread)
+        try:
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(
+                compute_passes(
+                    region=detected_region,
+                    hours=hours,
+                    direction=direction,
+                    group=group,
+                    max_results=50,
+                )
+            )
+            loop.close()
+        except Exception as e:
+            logger.error("Satellite pass computation failed: %s", e)
+            return f"Satellite pass computation failed: {e}"
+
+        if result.get("error"):
+            return f"Error: {result['error']}"
+
+        # Format answer
+        total = result["total_passes"]
+        sats_checked = result["satellites_checked"]
+        window_start = result["window_start"][:19]
+        window_end = result["window_end"][:19]
+        region_name = detected_region.replace("_", " ").title()
+        dir_label = "passed over" if direction == "past" else "will pass over"
+
+        lines = [
+            f"**{total} satellite passes** {dir_label} "
+            f"**{region_name}** ({sats_checked} satellites checked, "
+            f"{window_start} to {window_end} UTC).\n"
+        ]
+
+        if total == 0:
+            lines.append(
+                "No passes detected in this window. "
+                "Try a longer window or different satellite group."
+            )
+        else:
+            for i, p in enumerate(result["passes"][:15], 1):
+                enter = p["enter_time"][11:19]
+                exit_t = p["exit_time"][11:19]
+                lines.append(
+                    f"{i}. **{p['name']}** (NORAD {p['norad_id']}) "
+                    f"— {enter} to {exit_t} UTC "
+                    f"({p['duration_minutes']} min, "
+                    f"alt {p['peak_altitude_km']} km)"
+                )
+            if total > 15:
+                lines.append(
+                    f"\n... and {total - 15} more passes. "
+                    "Use `/api/satellite-passes` for full results."
+                )
+
+        perf = result.get("performance", {})
+        lines.append(
+            f"\n_Computed in {perf.get('compute_seconds', '?')}s "
+            f"({perf.get('total_propagations', '?'):,} propagations)_"
+        )
+
+        return "\n".join(lines)
+
     def query(self, question: str, session_id: str | None = None) -> dict:
         """Execute a natural language query against the knowledge graph."""
         if not self._initialized or not self._kg:
@@ -158,6 +305,20 @@ class GraphRAGService:
                 "answer": "GraphRAG is not initialized. Check LLM_API_KEY configuration.",
                 "error": True,
                 "session_id": session_id or "",
+            }
+
+        # Check for satellite pass queries (on-demand SGP4 computation)
+        sat_answer = self._check_satellite_pass_query(question)
+        if sat_answer:
+            timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
+            session_id = session_id or f"sess_{uuid.uuid4().hex[:12]}"
+            self._record_provenance(question, sat_answer, session_id)
+            return {
+                "answer": sat_answer,
+                "session_id": session_id,
+                "query": question,
+                "timestamp": timestamp,
+                "error": False,
             }
 
         # Check for queries about data not in the graph

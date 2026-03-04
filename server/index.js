@@ -94,38 +94,11 @@ app.get('/api/satellites', async (req, res) => {
       return;
     }
 
-    // Primary: tle.ivanstanojevic.me (free, no auth required)
-    const searchMap = {
-      stations: 'ISS',
-      active: '',
-      starlink: 'STARLINK',
-      'gps-ops': 'GPS',
-      weather: 'NOAA',
-    };
-    const searchTerm = searchMap[group] ?? group;
-    const pageSize = 100;
-
+    // Fetch TLE data from CelesTrak (primary) with tle.ivanstanojevic.me fallback
+    // CelesTrak GROUP parameter gives comprehensive satellite sets
     let tleText = '';
 
     try {
-      const apiRes = await fetch(
-        `https://tle.ivanstanojevic.me/api/tle/?search=${encodeURIComponent(searchTerm)}&page_size=${pageSize}&sort=popularity&sort-dir=desc`
-      );
-      if (!apiRes.ok) throw new Error(`TLE API HTTP ${apiRes.status}`);
-      const data = await apiRes.json();
-
-      // Convert JSON to 3-line TLE text format for the frontend parser
-      const lines = [];
-      for (const sat of data.member || []) {
-        if (sat.name && sat.line1 && sat.line2) {
-          lines.push(sat.name, sat.line1, sat.line2);
-        }
-      }
-      tleText = lines.join('\n');
-      console.log(`[SAT] Fetched ${(data.member || []).length} satellites from tle.ivanstanojevic.me for "${searchTerm}"`);
-    } catch (primaryErr) {
-      console.warn('[SAT] Primary TLE API failed, trying CelesTrak fallback:', primaryErr.message);
-      // Fallback: CelesTrak
       const celestrakRes = await fetch(
         `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=TLE`,
         {
@@ -137,7 +110,33 @@ app.get('/api/satellites', async (req, res) => {
       );
       if (!celestrakRes.ok) throw new Error(`CelesTrak HTTP ${celestrakRes.status}`);
       tleText = await celestrakRes.text();
-      console.log(`[SAT] Fetched TLE data from CelesTrak fallback for group: ${group}`);
+      const lineCount = tleText.split('\n').filter(l => l.trim().startsWith('1 ')).length;
+      console.log(`[SAT] Fetched ${lineCount} satellites from CelesTrak group: ${group}`);
+    } catch (primaryErr) {
+      console.warn('[SAT] CelesTrak failed, trying tle.ivanstanojevic.me fallback:', primaryErr.message);
+      const searchMap = {
+        stations: 'ISS',
+        active: '',
+        starlink: 'STARLINK',
+        'gps-ops': 'GPS',
+        weather: 'NOAA',
+        resource: 'EARTH',
+        military: 'MILITARY',
+      };
+      const searchTerm = searchMap[group] ?? group;
+      const apiRes = await fetch(
+        `https://tle.ivanstanojevic.me/api/tle/?search=${encodeURIComponent(searchTerm)}&page_size=100&sort=popularity&sort-dir=desc`
+      );
+      if (!apiRes.ok) throw new Error(`TLE API HTTP ${apiRes.status}`);
+      const data = await apiRes.json();
+      const lines = [];
+      for (const sat of data.member || []) {
+        if (sat.name && sat.line1 && sat.line2) {
+          lines.push(sat.name, sat.line1, sat.line2);
+        }
+      }
+      tleText = lines.join('\n');
+      console.log(`[SAT] Fetched ${(data.member || []).length} satellites from fallback for "${searchTerm}"`);
     }
 
     cache.set(cacheKey, tleText, 7200); // Cache 2 hours
@@ -1128,6 +1127,32 @@ app.get('/api/trajectory/:entityType/:entityId', async (req, res) => {
   } catch (err) {
     console.error('[TRAJECTORY] Proxy error:', err.message);
     res.json({ error: err.message, points: [] });
+  }
+});
+
+// ─── Satellite Passes (on-demand SGP4 computation via ingestion) ──
+app.get('/api/satellite-passes/regions', async (_req, res) => {
+  try {
+    const ingestionRes = await fetch('http://localhost:8000/satellite-passes/regions');
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[SAT-PASSES] Proxy error:', err.message);
+    res.json({ error: err.message, regions: [] });
+  }
+});
+
+app.get('/api/satellite-passes', async (req, res) => {
+  try {
+    const params = new URLSearchParams(req.query).toString();
+    const ingestionRes = await fetch(`http://localhost:8000/satellite-passes?${params}`);
+    if (!ingestionRes.ok) throw new Error(`Ingestion HTTP ${ingestionRes.status}`);
+    const data = await ingestionRes.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[SAT-PASSES] Proxy error:', err.message);
+    res.json({ error: err.message, passes: [] });
   }
 });
 
