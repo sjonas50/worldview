@@ -974,13 +974,13 @@ async function collectAISBurst(apiKey, durationMs = 20000) {
             country: meta.country ?? existing.country ?? null,
             countryCode: meta.country_code ?? existing.countryCode ?? null,
             // Keep position fields from PositionReport if already present
-            latitude: existing.latitude,
-            longitude: existing.longitude,
-            heading: existing.heading,
-            cog: existing.cog,
-            sog: existing.sog,
-            navStatus: existing.navStatus,
-            timestamp: existing.timestamp,
+            latitude: existing.latitude ?? null,
+            longitude: existing.longitude ?? null,
+            heading: existing.heading ?? null,
+            cog: existing.cog ?? null,
+            sog: existing.sog ?? 0,
+            navStatus: existing.navStatus ?? null,
+            timestamp: existing.timestamp ?? null,
           });
         }
       } catch { /* skip malformed messages */ }

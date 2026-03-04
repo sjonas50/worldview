@@ -9,7 +9,7 @@
   9 live data layers — military flights, commercial aviation, naval vessels, satellites, thermal anomalies, conflict events, earthquakes, traffic, and CCTV — with cross-layer correlation and a tactical command interface.
 </p>
 
-https://github.com/user-attachments/assets/b2bd05d2-f7be-49c8-a8c6-452b6b60cb34
+
 
 <p align="center">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" alt="React 19" />
@@ -321,4 +321,4 @@ All sensitive values are loaded from `.env` files excluded via `.gitignore`. If 
 
 This project is for **educational and demonstration purposes only**. External API usage is subject to each provider's terms of service. No commercial use is intended.
 
-Built by The Attic AI.
+
