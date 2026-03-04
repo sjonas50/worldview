@@ -397,6 +397,60 @@ function parseNswCameras(data) {
   }));
 }
 
+/** Parse UDOT KML camera feed into CameraFeed objects */
+function parseUdotCameras(kmlText) {
+  const cameras = [];
+  // Split by Placemark and extract data from each
+  const placemarks = kmlText.split('<Placemark');
+  for (let i = 1; i < placemarks.length; i++) {
+    const pm = placemarks[i];
+    // Extract coordinates
+    const coordMatch = pm.match(/<coordinates>([-\d.]+),([-\d.]+)/);
+    if (!coordMatch) continue;
+    const lon = parseFloat(coordMatch[1]);
+    const lat = parseFloat(coordMatch[2]);
+    if (!lat || !lon) continue;
+
+    // Extract SimpleData fields
+    const fields = {};
+    const fieldRegex = /<SimpleData name="([^"]+)">([^<]*)<\/SimpleData>/g;
+    let m;
+    while ((m = fieldRegex.exec(pm)) !== null) {
+      fields[m[1]] = m[2];
+    }
+
+    const isOnline = fields.IsOnline === 'True';
+    if (!isOnline) continue;
+
+    const extId = fields.ExtId || fields.IntId || '';
+    // Image URL: use ImageUrl field, upgrade to HTTPS
+    let imageUrl = fields.ImageUrl || '';
+    if (imageUrl.startsWith('http://')) {
+      imageUrl = imageUrl.replace('http://', 'https://');
+    }
+    if (!imageUrl && extId) {
+      imageUrl = `https://udottraffic.utah.gov/1_devices/aux${extId}.jpeg`;
+    }
+    if (!imageUrl) continue;
+
+    cameras.push({
+      id: `udot-${extId}`,
+      name: fields.DisplayName || 'Unknown',
+      source: 'udot',
+      country: 'US',
+      countryName: 'United States',
+      region: 'Utah',
+      latitude: lat,
+      longitude: lon,
+      imageUrl,
+      available: true,
+      viewDirection: fields.TrafficDirection || '',
+      lastUpdated: fields.LastUpdated || new Date().toISOString(),
+    });
+  }
+  return cameras;
+}
+
 /**
  * GET /api/cctv — Aggregated camera feeds from all sources.
  * Query params:
@@ -445,6 +499,17 @@ app.get('/api/cctv', async (req, res) => {
           });
           if (!r.ok) throw new Error(`NSW HTTP ${r.status}`);
           return parseNswCameras(await r.json());
+        },
+      },
+      {
+        key: 'cctv-udot',
+        source: 'udot',
+        country: 'US',
+        ttl: 300,
+        fetch: async () => {
+          const r = await fetch('https://www.udottraffic.utah.gov/ForecastView/KmlFile.aspx?kmlFileType=Camera');
+          if (!r.ok) throw new Error(`UDOT HTTP ${r.status}`);
+          return parseUdotCameras(await r.text());
         },
       },
     ];

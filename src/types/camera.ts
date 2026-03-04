@@ -19,7 +19,7 @@ export interface CameraFeed {
   lastUpdated: string;    // ISO 8601
 }
 
-export type CameraSource = 'tfl' | 'austin' | 'tfnsw' | 'windy' | 'nycdot' | 'caltrans';
+export type CameraSource = 'tfl' | 'austin' | 'tfnsw' | 'windy' | 'nycdot' | 'caltrans' | 'udot';
 
 export interface CameraMeta {
   totalCameras: number;

@@ -34,6 +34,8 @@ interface OperationsPanelProps {
   onShowSatPathsToggle: () => void;
   satCategoryFilter: Record<SatelliteCategory, boolean>;
   onSatCategoryToggle: (category: SatelliteCategory) => void;
+  gibsLayers: { trueColor: boolean; nightLights: boolean };
+  onGibsToggle: (layer: 'trueColor' | 'nightLights') => void;
   onResetView: () => void;
   onLocateMe: () => void;
   geoStatus: GeoStatus;
@@ -89,6 +91,8 @@ export default function OperationsPanel({
   onShowSatPathsToggle,
   satCategoryFilter,
   onSatCategoryToggle,
+  gibsLayers,
+  onGibsToggle,
   onResetView,
   onLocateMe,
   geoStatus,
@@ -151,6 +155,38 @@ export default function OperationsPanel({
               {label}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Satellite Imagery Section */}
+      <div className="p-3 border-b border-wv-border">
+        <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Satellite Imagery</div>
+        <div className="flex flex-col gap-1">
+          {([
+            { key: 'trueColor' as const, label: 'VIIRS TRUE COLOR', icon: '🛰' },
+            { key: 'nightLights' as const, label: 'NIGHT LIGHTS (DNB)', icon: '🌙' },
+          ]).map(({ key, label, icon }) => {
+            const isOn = gibsLayers[key];
+            return (
+              <button
+                key={key}
+                onClick={() => onGibsToggle(key)}
+                className={`
+                  flex items-center gap-2 px-2 py-1.5 rounded text-[10px]
+                  transition-all duration-200 text-left
+                  ${isMobile ? 'min-h-[44px] text-[12px]' : ''}
+                  ${isOn
+                    ? 'text-wv-cyan bg-wv-cyan/10'
+                    : 'text-wv-muted hover:text-wv-text hover:bg-white/5'
+                  }
+                `}
+              >
+                <span className="text-sm">{icon}</span>
+                <span className="tracking-wider">{label}</span>
+                <span className={`ml-auto w-1.5 h-1.5 rounded-full transition-colors duration-300 ${isOn ? 'bg-wv-cyan' : 'bg-wv-muted/30'}`} />
+              </button>
+            );
+          })}
         </div>
       </div>
 

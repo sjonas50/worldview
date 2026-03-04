@@ -12,6 +12,7 @@ import FIRMSLayer from './components/layers/FIRMSLayer';
 import MilFlightLayer from './components/layers/MilFlightLayer';
 import ConflictLayer from './components/layers/ConflictLayer';
 import TrajectoryLayer from './components/layers/TrajectoryLayer';
+import GibsImageryLayer from './components/layers/GibsImageryLayer';
 import type { AltitudeBand } from './components/layers/FlightLayer';
 import type { SatelliteCategory } from './components/layers/SatelliteLayer';
 import OperationsPanel from './components/ui/OperationsPanel';
@@ -109,6 +110,9 @@ function App() {
     milFlights: false,
     conflicts: false,
   });
+
+  // State: GIBS satellite imagery overlays
+  const [gibsLayers, setGibsLayers] = useState({ trueColor: false, nightLights: false });
 
   // State: CCTV country filter
   const [cctvCountryFilter, setCctvCountryFilter] = useState('ALL');
@@ -349,6 +353,16 @@ function App() {
     });
   }, [audio]);
 
+  /** Toggle GIBS satellite imagery layers; auto-switch to OSM if Google 3D is active */
+  const handleGibsToggle = useCallback((layer: 'trueColor' | 'nightLights') => {
+    setGibsLayers((prev) => {
+      const next = !prev[layer];
+      audio.play(next ? 'toggleOn' : 'toggleOff');
+      if (next && mapTiles === 'google') setMapTiles('osm');
+      return { ...prev, [layer]: next };
+    });
+  }, [audio, mapTiles]);
+
   /** Select a camera in the panel (shows feed preview, no fly) */
   const handleSelectCamera = useCallback((cam: CameraFeed | null) => {
     setSelectedCameraId(cam ? cam.id : null);
@@ -500,6 +514,10 @@ function App() {
           visible={layers.conflicts}
           isTracking={!!trackedEntity}
         />
+        <GibsImageryLayer
+          trueColorVisible={gibsLayers.trueColor}
+          nightLightsVisible={gibsLayers.nightLights}
+        />
         <TrajectoryLayer
           points={trajectoryPoints}
           visible={trajectoryVisible}
@@ -535,6 +553,8 @@ function App() {
         onResetView={() => { audio.play('click'); handleResetView(); }}
         onLocateMe={() => { audio.play('click'); geoLocate(); }}
         geoStatus={geoStatus}
+        gibsLayers={gibsLayers}
+        onGibsToggle={handleGibsToggle}
         isMobile={isMobile}
         queryState={graphQuery}
       />
