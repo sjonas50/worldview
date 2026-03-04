@@ -72,6 +72,38 @@ class GraphRAGService:
             model = LiteModel(model_name=model_name)
             model_config = KnowledgeGraphModelConfig.with_model(model)
 
+            # Domain context for Cypher generation and Q&A
+            cypher_instruction = (
+                "You are querying a WorldView OSINT knowledge graph. "
+                "The graph contains ONLY these node types:\n"
+                "- Aircraft (military flights: hex, callsign, operator, isMilitary, isLADD, lastLat/Lon/Alt/Heading/Speed/Seen)\n"
+                "- Vessel (AIS ship tracking: mmsi, name, shipType, country, lastLat/Lon/Sog/Cog/Seen)\n"
+                "- ThermalAnomaly (NASA FIRMS hotspots: frp, brightness, confidence, daynight, acq_date/time)\n"
+                "- ConflictEvent (GDELT events: name, eventType, goldstein, tone, domain, sourceCountry)\n"
+                "- Location (291 seeded: airports, military bases, chokepoints, ports)\n"
+                "- Operator (military operators: name, type)\n"
+                "- CorrelationAlert (cross-layer correlations: ruleType, confidence, summary)\n"
+                "- QueryAudit (analyst query history)\n\n"
+                "Relationships: OBSERVED_AT (Aircraft/Vessel->Location with temporal edges), "
+                "OPERATED_BY (Aircraft->Operator), DETECTED_NEAR (ThermalAnomaly->Location), "
+                "REPORTED_NEAR (ConflictEvent->Location), PROXIMATE_TO (Aircraft->ThermalAnomaly), "
+                "CORRELATED_WITH (ThermalAnomaly->ConflictEvent).\n\n"
+                "IMPORTANT: Satellites, earthquakes, CCTV cameras, and traffic data are NOT in the graph. "
+                "If asked about these, explain they are rendered in the frontend only, not stored in the knowledge graph.\n"
+                "Generate exactly ONE Cypher query. Never generate multiple queries.\n\n"
+                "Graph ontology:\n{ontology}"
+            )
+
+            qa_instruction = (
+                "You are an OSINT intelligence analyst assistant for the WorldView platform. "
+                "Answer questions based on the FalkorDB knowledge graph data. "
+                "The graph tracks: military aircraft (Airplanes.live), naval vessels (AISStream AIS), "
+                "NASA FIRMS thermal anomalies, GDELT conflict events, and cross-layer correlations.\n"
+                "Satellites, earthquakes, CCTV, and traffic are displayed on the globe but NOT stored "
+                "in the knowledge graph — if asked, clarify this distinction.\n"
+                "Be concise and tactical in your responses."
+            )
+
             # Create KnowledgeGraph instance
             self._kg = KnowledgeGraph(
                 name=self.settings.falkordb_graph,
@@ -79,6 +111,8 @@ class GraphRAGService:
                 ontology=ontology,
                 host=self.settings.falkordb_host,
                 port=self.settings.falkordb_port,
+                cypher_system_instruction=cypher_instruction,
+                qa_system_instruction=qa_instruction,
             )
 
             self._initialized = True
@@ -94,6 +128,29 @@ class GraphRAGService:
     def is_initialized(self) -> bool:
         return self._initialized
 
+    # Data types NOT in the knowledge graph (frontend-only)
+    _NON_GRAPH_KEYWORDS = {
+        "satellite": "Satellites are tracked via TLE/SGP4 propagation in the browser only, not stored in the knowledge graph.",
+        "orbit": "Satellite orbital data is propagated client-side via SGP4, not stored in the knowledge graph.",
+        "earthquake": "Earthquake data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
+        "seismic": "Seismic data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
+        "cctv": "CCTV camera feeds are fetched directly from TfL/Austin/NSW APIs in the browser, not stored in the knowledge graph.",
+        "camera": "CCTV camera data is fetched directly in the browser, not stored in the knowledge graph.",
+        "traffic": "Traffic data is fetched from OpenStreetMap Overpass in the browser, not stored in the knowledge graph.",
+    }
+
+    def _check_non_graph_query(self, question: str) -> str | None:
+        """Return a helpful response if the query is about non-graph data."""
+        q_lower = question.lower()
+        for keyword, explanation in self._NON_GRAPH_KEYWORDS.items():
+            if keyword in q_lower:
+                return (
+                    f"{explanation} "
+                    "The knowledge graph contains: military aircraft, naval vessels (AIS), "
+                    "NASA FIRMS thermal anomalies, GDELT conflict events, and cross-layer correlations."
+                )
+        return None
+
     def query(self, question: str, session_id: str | None = None) -> dict:
         """Execute a natural language query against the knowledge graph."""
         if not self._initialized or not self._kg:
@@ -101,6 +158,20 @@ class GraphRAGService:
                 "answer": "GraphRAG is not initialized. Check LLM_API_KEY configuration.",
                 "error": True,
                 "session_id": session_id or "",
+            }
+
+        # Check for queries about data not in the graph
+        non_graph_answer = self._check_non_graph_query(question)
+        if non_graph_answer:
+            timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
+            session_id = session_id or f"sess_{uuid.uuid4().hex[:12]}"
+            self._record_provenance(question, non_graph_answer, session_id)
+            return {
+                "answer": non_graph_answer,
+                "session_id": session_id,
+                "query": question,
+                "timestamp": timestamp,
+                "error": False,
             }
 
         # Get or create chat session
