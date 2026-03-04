@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-WorldView is a real-time tactical intelligence dashboard built on a 3D CesiumJS globe. It overlays live data feeds — flights, satellites, earthquakes, traffic, and CCTV cameras — onto an interactive Earth visualisation with a military/tactical UI aesthetic.
+WorldView is a real-time OSINT geospatial intelligence dashboard built on a 3D CesiumJS globe. It overlays 9 live data feeds — flights (commercial + military), satellites, ships, thermal anomalies, conflict events, earthquakes, traffic, and CCTV cameras — onto an interactive Earth visualisation with a tactical UI aesthetic.
 
 **Tech stack:** React 19 + TypeScript + Vite 7 + CesiumJS (via Resium) + Tailwind CSS v4 + Express 5 backend proxy + WebSocket.
 
@@ -12,7 +12,7 @@ WorldView is a real-time tactical intelligence dashboard built on a 3D CesiumJS 
 worldview/
 ├── server/                  # Express backend proxy (Node.js, plain JS)
 │   ├── index.js             # All API routes, WebSocket, caching
-│   ├── .env                 # Server-side secrets (OpenSky, Google Maps, NSW)
+│   ├── .env                 # Server-side secrets (OpenSky, FIRMS, AISStream, etc.)
 │   └── data/
 │       └── sydneyRoads.js   # Static fallback road data for Sydney CBD
 ├── src/
@@ -26,9 +26,13 @@ worldview/
 │   │   │   └── EntityClickHandler.tsx # Click-to-track entities, ESC to unlock
 │   │   ├── layers/
 │   │   │   ├── CCTVLayer.tsx          # CCTV markers (imperative BillboardCollection)
+│   │   │   ├── ConflictLayer.tsx      # GDELT conflict events (color by Goldstein scale)
 │   │   │   ├── EarthquakeLayer.tsx    # Pulsing seismic markers (Resium entities)
+│   │   │   ├── FIRMSLayer.tsx         # NASA thermal hotspots (strike detection)
 │   │   │   ├── FlightLayer.tsx        # High-perf flight rendering (~27K aircraft)
+│   │   │   ├── MilFlightLayer.tsx     # Military aircraft (red diamonds, LADD flags)
 │   │   │   ├── SatelliteLayer.tsx     # SGP4-propagated satellite orbits
+│   │   │   ├── ShipLayer.tsx          # AIS vessel tracking by category
 │   │   │   └── TrafficLayer.tsx       # Road network + animated vehicle particles
 │   │   └── ui/
 │   │       ├── CCTVPanel.tsx          # Camera thumbnail grid + preview
@@ -41,12 +45,16 @@ worldview/
 │   ├── data/
 │   │   └── airports.ts     # Airport IATA → coordinate lookup
 │   ├── hooks/
-│   │   ├── useCameras.ts   # CCTV feed aggregation (TfL, Austin, NSW)
-│   │   ├── useEarthquakes.ts # USGS earthquake polling
-│   │   ├── useFlights.ts   # Global flights via FR24 proxy
-│   │   ├── useFlightsLive.ts # Regional high-freq flights via adsb.fi
-│   │   ├── useSatellites.ts  # TLE fetch + SGP4 propagation pipeline
-│   │   └── useTraffic.ts     # Road fetch + 60fps vehicle animation
+│   │   ├── useCameras.ts      # CCTV feed aggregation (TfL, Austin, NSW)
+│   │   ├── useConflictEvents.ts # GDELT conflict/cooperation event polling
+│   │   ├── useEarthquakes.ts  # USGS earthquake polling
+│   │   ├── useFIRMS.ts        # NASA FIRMS thermal anomaly polling
+│   │   ├── useFlights.ts      # Global flights via FR24 proxy
+│   │   ├── useFlightsLive.ts  # Regional high-freq flights via adsb.fi
+│   │   ├── useMilFlights.ts   # Military flights via Airplanes.live
+│   │   ├── useSatellites.ts   # TLE fetch + SGP4 propagation pipeline
+│   │   ├── useShips.ts        # AIS vessel tracking via AISStream.io
+│   │   └── useTraffic.ts      # Road fetch + 60fps vehicle animation
 │   ├── shaders/
 │   │   └── postprocess.ts  # GLSL post-processing (CRT, NVG, FLIR)
 │   └── types/
@@ -102,15 +110,20 @@ npm run preview
 | `GOOGLE_MAPS_API_KEY` | Server-side Google Maps (unused currently) |
 | `OPENSKY_CLIENT_ID` | OpenSky Network OAuth2 client |
 | `OPENSKY_CLIENT_SECRET` | OpenSky Network OAuth2 secret |
+| `NASA_FIRMS_MAP_KEY` | NASA FIRMS API key (free, register at firms.modaps.eosdis.nasa.gov) |
+| `AISSTREAM_API_KEY` | AISStream.io WebSocket API key (free tier) |
 
 ## Architecture Decisions
 
-- **Imperative Cesium rendering** — FlightLayer, CCTVLayer, and TrafficLayer bypass Resium's React bindings and use raw `BillboardCollection` / `PolylineCollection` / `PointPrimitiveCollection` for performance (handles 27K+ entities at 60 fps).
+- **Imperative Cesium rendering** — All high-volume layers (Flight, Ship, CCTV, Traffic, FIRMS, MilFlight, Conflict) bypass Resium's React bindings and use raw `BillboardCollection` / `PolylineCollection` / `PointPrimitiveCollection` for performance (handles 27K+ entities at 60 fps).
 - **Dual flight data sources** — Global coverage from FlightRadar24 (30 s poll), enriched with high-frequency regional data from adsb.fi (5 s poll) for smooth movement when zoomed in. Deduplication by ICAO24 hex.
 - **Backend proxy pattern** — All external API calls routed through Express server to hide credentials, enforce rate limits, and cache responses via `node-cache`.
 - **Dead-reckoning** — FlightLayer extrapolates aircraft positions between data updates using heading + velocity for smooth 60 fps rendering.
 - **SGP4 propagation** — Satellites positioned in real-time using TLE orbital elements and the `satellite.js` library, not pre-computed paths.
+- **Burst-WebSocket pattern** — AIS ship data collected via 20 s WebSocket burst to AISStream.io, then cached for 60 s. Fits within Vercel's 30 s serverless timeout.
+- **Strike signature detection** — FIRMS thermal anomalies flagged as potential strikes when nighttime + high FRP (>50 MW) + high confidence.
 - **GLSL post-processing** — CRT scanline, night-vision (NVG), and thermal (FLIR) effects applied as CesiumJS `PostProcessStage` fragment shaders.
+- **Historical snapshots** — Server auto-records mil flights, ships, FIRMS, earthquakes, and GDELT every 60 s into a rolling 24 h in-memory buffer.
 
 ## Coding Conventions
 
@@ -131,7 +144,7 @@ External APIs ──► Express Proxy (cache + auth) ──► React Hooks (poll
                                                App.tsx (state mgmt)
                                                        │
                               ┌─────────────┬──────────┼──────────┬───────────┐
-                         GlobeViewer    Layers (5)    UI Panels   StatusBar
+                         GlobeViewer    Layers (9)    UI Panels   StatusBar
                          (Cesium)     (imperative)   (React DOM)  (React DOM)
 ```
 
@@ -141,9 +154,13 @@ External APIs ──► Express Proxy (cache + auth) ──► React Hooks (poll
 |---|---|---|---|
 | FlightRadar24 | `data-cloud.flightradar24.com` | 15 s min interval | Global aircraft positions, routes |
 | adsb.fi | `opendata.adsb.fi` | 5 s poll | Regional high-freq aircraft |
+| Airplanes.live | `api.airplanes.live/v2/mil` | 1 req/s | **Unfiltered military aircraft (incl. LADD)** |
 | OpenSky Network | `opensky-network.org` (OAuth2) | 10 s (WebSocket) | Aircraft via bounding box |
+| NASA FIRMS | `firms.modaps.eosdis.nasa.gov` | 5 min cache | **Thermal anomalies / strike detection** |
+| GDELT | `api.gdeltproject.org` | 15 min cache | **Geolocated conflict/news events** |
 | USGS | `earthquake.usgs.gov` | 60 s cache | Earthquake GeoJSON (past 24 h) |
 | TLE API / CelesTrak | `tle.ivanstanojevic.me` / `celestrak.org` | 2 hr cache | Satellite TLE data |
+| AISStream.io | `stream.aisstream.io` (WebSocket) | 20 s burst | **Global vessel AIS positions** |
 | Overpass (OSM) | `overpass-api.de` | 24 hr cache | Road network geometries |
 | TfL | `api.tfl.gov.uk` | 5 min cache | London CCTV cameras |
 | Austin Open Data | `data.austintexas.gov` | 5 min cache | Austin TX traffic cameras |
@@ -160,6 +177,9 @@ External APIs ──► Express Proxy (cache + auth) ──► React Hooks (poll
 
 - Google 3D Photorealistic Tiles require a valid API key with Maps JavaScript API enabled; falls back to OSM automatically.
 - Cesium Ion token is optional; only needed for Cesium's own terrain/imagery services.
-- The backend server must be running for flights, satellites, CCTV, traffic, and earthquake data to load (all proxied through `/api`).
+- The backend server must be running for all data layers to load (all proxied through `/api`).
 - FlightRadar24 scraping may be rate-limited or blocked; the system degrades gracefully to adsb.fi.
 - Overpass API has strict rate limits; the server uses failover servers and falls back to static Sydney road data.
+- AISStream.io requires a free API key for ship tracking.
+- NASA FIRMS MAP_KEY is optional but provides higher rate limits.
+- Airplanes.live military endpoint is completely free with no API key required.

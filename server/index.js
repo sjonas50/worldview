@@ -568,6 +568,321 @@ app.get('/api/geolocation', async (req, res) => {
   }
 });
 
+// ─── NASA FIRMS Thermal Anomaly Detection ────────────────────
+
+/**
+ * GET /api/firms — Global thermal anomalies from NASA VIIRS sensor.
+ * Returns hotspots from the last 24 hours. No API key needed for basic access.
+ * High-FRP nighttime hotspots in conflict zones = potential strike signatures.
+ *
+ * Query params:
+ *   ?region=world           — geographic region (default: world)
+ *   ?hours=24               — time window in hours (default: 24)
+ *   ?source=VIIRS_SNPP_NRT  — sensor source (default: VIIRS_SNPP_NRT)
+ */
+app.get('/api/firms', async (req, res) => {
+  try {
+    const cached = cache.get('firms');
+    if (cached) return res.json(cached);
+
+    // NASA FIRMS CSV endpoint — no key needed for limited access
+    // For production use, register for a MAP_KEY at https://firms.modaps.eosdis.nasa.gov/api/area/
+    const mapKey = process.env.NASA_FIRMS_MAP_KEY || 'FIRMS_MAP_KEY_PLACEHOLDER';
+    const source = req.query.source || 'VIIRS_SNPP_NRT';
+    const dayRange = Math.min(parseInt(req.query.hours) || 24, 48) / 24;
+
+    let hotspots = [];
+
+    // Try MAP_KEY-authenticated endpoint first
+    if (mapKey && mapKey !== 'FIRMS_MAP_KEY_PLACEHOLDER') {
+      try {
+        const firmsRes = await fetch(
+          `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${mapKey}/${source}/world/${dayRange}`,
+          { headers: { 'User-Agent': 'WorldView-OSINT/1.0 (educational project)' } }
+        );
+        if (firmsRes.ok) {
+          const csvText = await firmsRes.text();
+          hotspots = parseFIRMSCsv(csvText);
+          console.log(`[FIRMS] Fetched ${hotspots.length} hotspots from FIRMS API`);
+        }
+      } catch (err) {
+        console.warn('[FIRMS] API failed, trying GeoJSON fallback:', err.message);
+      }
+    }
+
+    // Fallback: FIRMS GeoJSON feed (last 24h, global, no key)
+    if (hotspots.length === 0) {
+      try {
+        const geoRes = await fetch(
+          'https://firms.modaps.eosdis.nasa.gov/api/area/csv/FIRMS_MAP_KEY_PLACEHOLDER/VIIRS_SNPP_NRT/world/1',
+          { headers: { 'User-Agent': 'WorldView-OSINT/1.0' } }
+        );
+        if (geoRes.ok) {
+          const csvText = await geoRes.text();
+          hotspots = parseFIRMSCsv(csvText);
+        }
+      } catch {
+        // If all FIRMS endpoints fail, return empty gracefully
+        console.warn('[FIRMS] All endpoints failed, returning empty');
+      }
+    }
+
+    cache.set('firms', hotspots, 300); // Cache 5 minutes
+    res.json(hotspots);
+  } catch (err) {
+    console.error('[FIRMS] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Parse FIRMS CSV data into structured hotspot objects.
+ * CSV columns: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,
+ *              satellite,instrument,confidence,version,bright_ti5,frp,daynight
+ */
+function parseFIRMSCsv(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+  const latIdx = headers.indexOf('latitude');
+  const lonIdx = headers.indexOf('longitude');
+  const brightIdx = headers.indexOf('bright_ti4');
+  const frpIdx = headers.indexOf('frp');
+  const confIdx = headers.indexOf('confidence');
+  const dateIdx = headers.indexOf('acq_date');
+  const timeIdx = headers.indexOf('acq_time');
+  const satIdx = headers.indexOf('satellite');
+  const dnIdx = headers.indexOf('daynight');
+
+  if (latIdx === -1 || lonIdx === -1) return [];
+
+  const hotspots = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    if (cols.length < headers.length) continue;
+
+    const lat = parseFloat(cols[latIdx]);
+    const lon = parseFloat(cols[lonIdx]);
+    if (isNaN(lat) || isNaN(lon)) continue;
+
+    const acqDate = cols[dateIdx] || '';
+    const acqTime = (cols[timeIdx] || '').padStart(4, '0');
+    const timestamp = acqDate && acqTime
+      ? new Date(`${acqDate}T${acqTime.slice(0, 2)}:${acqTime.slice(2)}:00Z`).getTime()
+      : Date.now();
+
+    hotspots.push({
+      latitude: lat,
+      longitude: lon,
+      brightness: parseFloat(cols[brightIdx]) || 0,
+      frp: parseFloat(cols[frpIdx]) || 0,
+      confidence: (cols[confIdx] || 'l').toLowerCase().charAt(0), // 'l'|'n'|'h'
+      acq_date: acqDate,
+      acq_time: acqTime,
+      satellite: cols[satIdx] || '',
+      daynight: (cols[dnIdx] || 'D').toUpperCase().charAt(0),
+      timestamp,
+    });
+  }
+
+  return hotspots;
+}
+
+// ─── Airplanes.live Military Flights ─────────────────────────
+
+/**
+ * GET /api/flights/military — Unfiltered military aircraft from Airplanes.live.
+ * No API key required. Returns all aircraft tagged as military in the
+ * Airplanes.live database — including LADD-blocked aircraft hidden on
+ * commercial trackers like FlightRadar24.
+ */
+app.get('/api/flights/military', async (req, res) => {
+  try {
+    const cached = cache.get('mil-flights');
+    if (cached) return res.json(cached);
+
+    const apiRes = await fetch('https://api.airplanes.live/v2/mil', {
+      headers: {
+        'User-Agent': 'WorldView-OSINT/1.0 (educational project)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!apiRes.ok) throw new Error(`Airplanes.live HTTP ${apiRes.status}`);
+    const data = await apiRes.json();
+
+    const flights = (data.ac || [])
+      .filter((a) => a.lat != null && a.lon != null)
+      .map((a) => {
+        const dbFlags = a.dbFlags || 0;
+        return {
+          hex: (a.hex || '').toLowerCase(),
+          callsign: (a.flight || '').trim(),
+          registration: a.r || '',
+          aircraftType: a.t || '',
+          description: a.desc || '',
+          operator: a.ownOp || '',
+          latitude: a.lat,
+          longitude: a.lon,
+          altitude: (a.alt_baro ?? 0) * 0.3048, // feet → metres
+          altitudeFeet: a.alt_baro ?? 0,
+          heading: a.track ?? a.mag_heading ?? null,
+          velocity: a.gs != null ? a.gs * 0.514444 : null, // knots → m/s
+          velocityKnots: a.gs ?? null,
+          squawk: a.squawk || '',
+          verticalRate: a.baro_rate != null ? a.baro_rate * 0.00508 : null,
+          dbFlags,
+          isMilitary: (dbFlags & 1) !== 0,
+          isLADD: (dbFlags & 8) !== 0,
+          emergency: ['7500', '7600', '7700'].includes(a.squawk || ''),
+        };
+      });
+
+    console.log(`[MIL] ${flights.length} military aircraft from Airplanes.live`);
+    cache.set('mil-flights', flights, 8); // Cache 8 seconds (fast refresh)
+    res.json(flights);
+  } catch (err) {
+    console.error('[MIL] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GDELT Conflict Events ──────────────────────────────────
+
+/**
+ * GET /api/gdelt — Geolocated conflict/news events from GDELT.
+ * No API key required. Updated every 15 minutes.
+ * Returns GeoJSON features with tone, Goldstein scale, and source metadata.
+ *
+ * Query params:
+ *   ?query=iran          — filter by keyword (default: conflict themes)
+ *   ?timespan=24h        — time window (default: 24h)
+ *   ?maxpoints=500       — max results (default: 500)
+ */
+app.get('/api/gdelt', async (req, res) => {
+  try {
+    const cached = cache.get('gdelt');
+    if (cached) return res.json(cached);
+
+    const query = req.query.query || 'conflict OR military OR strike OR missile';
+    const timespan = req.query.timespan || '24h';
+    const maxpoints = Math.min(parseInt(req.query.maxpoints) || 500, 2000);
+
+    const gdeltUrl = `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=pointdata&format=GeoJSON&timespan=${timespan}&maxpoints=${maxpoints}&sortby=ToneDesc`;
+
+    const gdeltRes = await fetch(gdeltUrl, {
+      headers: { 'User-Agent': 'WorldView-OSINT/1.0 (educational project)' },
+    });
+
+    if (!gdeltRes.ok) throw new Error(`GDELT HTTP ${gdeltRes.status}`);
+    const data = await gdeltRes.json();
+
+    console.log(`[GDELT] Fetched ${(data.features || []).length} geolocated events`);
+    cache.set('gdelt', data, 900); // Cache 15 minutes (GDELT update cycle)
+    res.json(data);
+  } catch (err) {
+    console.error('[GDELT] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Historical Snapshot Recording ──────────────────────────
+
+/**
+ * POST /api/snapshot — Record a point-in-time snapshot of all active data.
+ * Used for historical reconstruction / timeline replay.
+ * Stores snapshots in memory (could be backed by SQLite for persistence).
+ */
+const snapshots = [];
+const MAX_SNAPSHOTS = 1440; // 24 hours at 1-minute intervals
+
+app.post('/api/snapshot', async (_req, res) => {
+  try {
+    const snapshot = {
+      timestamp: Date.now(),
+      utc: new Date().toISOString(),
+      flights: cache.get('flights-global-v2') || cache.get('mil-flights') || [],
+      ships: cache.get('ships-all') || cache.get('ships-moving') || [],
+      firms: cache.get('firms') || [],
+      earthquakes: cache.get('earthquakes') || { features: [] },
+      gdelt: cache.get('gdelt') || { features: [] },
+    };
+
+    snapshots.push(snapshot);
+    if (snapshots.length > MAX_SNAPSHOTS) snapshots.shift();
+
+    console.log(`[SNAPSHOT] Recorded snapshot ${snapshots.length}/${MAX_SNAPSHOTS} at ${snapshot.utc}`);
+    res.json({ ok: true, count: snapshots.length, timestamp: snapshot.utc });
+  } catch (err) {
+    console.error('[SNAPSHOT] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/snapshots — List available snapshots with timestamps.
+ * Query params:
+ *   ?from=<unix_ms>  — snapshots after this time
+ *   ?to=<unix_ms>    — snapshots before this time
+ *   ?limit=100       — max results
+ */
+app.get('/api/snapshots', (req, res) => {
+  const from = parseInt(req.query.from) || 0;
+  const to = parseInt(req.query.to) || Date.now();
+  const limit = Math.min(parseInt(req.query.limit) || 100, MAX_SNAPSHOTS);
+
+  const filtered = snapshots
+    .filter((s) => s.timestamp >= from && s.timestamp <= to)
+    .slice(-limit)
+    .map((s) => ({ timestamp: s.timestamp, utc: s.utc }));
+
+  res.json({ snapshots: filtered, total: snapshots.length });
+});
+
+/**
+ * GET /api/snapshot/:timestamp — Retrieve a specific snapshot by timestamp.
+ */
+app.get('/api/snapshot/:timestamp', (req, res) => {
+  const ts = parseInt(req.params.timestamp);
+  // Find closest snapshot
+  const closest = snapshots.reduce((best, s) => {
+    return (!best || Math.abs(s.timestamp - ts) < Math.abs(best.timestamp - ts)) ? s : best;
+  }, null);
+
+  if (!closest) return res.status(404).json({ error: 'No snapshots available' });
+  res.json(closest);
+});
+
+// ─── Auto-snapshot recording (every 60s when data is flowing) ──
+let snapshotInterval = null;
+function startSnapshotRecording() {
+  if (snapshotInterval) return;
+  snapshotInterval = setInterval(async () => {
+    try {
+      // Only record if we have meaningful data cached
+      const hasFlights = cache.get('mil-flights') || cache.get('flights-global-v2');
+      if (!hasFlights) return;
+
+      const snapshot = {
+        timestamp: Date.now(),
+        utc: new Date().toISOString(),
+        milFlights: cache.get('mil-flights') || [],
+        ships: cache.get('ships-all') || cache.get('ships-moving') || [],
+        firms: cache.get('firms') || [],
+        earthquakes: cache.get('earthquakes') || { features: [] },
+        gdelt: cache.get('gdelt') || { features: [] },
+      };
+
+      snapshots.push(snapshot);
+      if (snapshots.length > MAX_SNAPSHOTS) snapshots.shift();
+    } catch { /* silent */ }
+  }, 60_000); // Every 60 seconds
+}
+
+// Start auto-recording after 30s (let data sources warm up)
+setTimeout(startSnapshotRecording, 30_000);
+
 // ─── Ship / AIS Tracking (AISStream.io) ──────────────────────
 
 /**

@@ -8,6 +8,9 @@ import FlightLayer from './components/layers/FlightLayer';
 import TrafficLayer from './components/layers/TrafficLayer';
 import CCTVLayer from './components/layers/CCTVLayer';
 import ShipLayer from './components/layers/ShipLayer';
+import FIRMSLayer from './components/layers/FIRMSLayer';
+import MilFlightLayer from './components/layers/MilFlightLayer';
+import ConflictLayer from './components/layers/ConflictLayer';
 import type { AltitudeBand } from './components/layers/FlightLayer';
 import type { SatelliteCategory } from './components/layers/SatelliteLayer';
 import OperationsPanel from './components/ui/OperationsPanel';
@@ -26,6 +29,9 @@ import { useFlightsLive } from './hooks/useFlightsLive';
 import { useTraffic } from './hooks/useTraffic';
 import { useCameras } from './hooks/useCameras';
 import { useShips } from './hooks/useShips';
+import { useFIRMS } from './hooks/useFIRMS';
+import { useMilFlights } from './hooks/useMilFlights';
+import { useConflictEvents } from './hooks/useConflictEvents';
 import { useGeolocation } from './hooks/useGeolocation';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useAudio } from './hooks/useAudio';
@@ -94,6 +100,9 @@ function App() {
     traffic: false,
     cctv: true,
     ships: false,
+    firms: false,
+    milFlights: false,
+    conflicts: false,
   });
 
   // State: CCTV country filter
@@ -178,6 +187,9 @@ function App() {
     camera.altitude,
   );
   const { ships, feedItems: shipFeedItems, isLoading: shipsLoading } = useShips(layers.ships);
+  const { hotspots: firmsHotspots, feedItems: firmsFeedItems, isLoading: firmsLoading } = useFIRMS(layers.firms);
+  const { milFlights, feedItems: milFeedItems, isLoading: milLoading } = useMilFlights(layers.milFlights);
+  const { events: conflictEvents, feedItems: conflictFeedItems, isLoading: conflictsLoading } = useConflictEvents(layers.conflicts);
   const {
     cameras: cctvCameras,
     feedItems: cctvFeedItems,
@@ -257,7 +269,7 @@ function App() {
   }, [flightsGlobal, flightsLive]);
 
   // Combine intel feed items
-  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems];
+  const allFeedItems: IntelFeedItem[] = [...fltFeedItems, ...satFeedItems, ...eqFeedItems, ...cctvFeedItems, ...shipFeedItems, ...firmsFeedItems, ...milFeedItems, ...conflictFeedItems];
 
   // Handlers
   const handleCameraChange = useCallback(
@@ -267,7 +279,7 @@ function App() {
     []
   );
 
-  const handleLayerToggle = useCallback((layer: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships') => {
+  const handleLayerToggle = useCallback((layer: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships' | 'firms' | 'milFlights' | 'conflicts') => {
     setLayers((prev) => {
       const next = !prev[layer];
       audio.play(next ? 'toggleOn' : 'toggleOff');
@@ -412,6 +424,21 @@ function App() {
           visible={layers.ships}
           isTracking={!!trackedEntity}
         />
+        <FIRMSLayer
+          hotspots={firmsHotspots}
+          visible={layers.firms}
+          isTracking={!!trackedEntity}
+        />
+        <MilFlightLayer
+          milFlights={milFlights}
+          visible={layers.milFlights}
+          isTracking={!!trackedEntity}
+        />
+        <ConflictLayer
+          events={conflictEvents}
+          visible={layers.conflicts}
+          isTracking={!!trackedEntity}
+        />
       </GlobeViewer>
 
       {/* Tactical UI Overlay */}
@@ -421,7 +448,7 @@ function App() {
         shaderMode={shaderMode}
         onShaderChange={(mode) => { audio.play('shaderSwitch'); setShaderMode(mode); }}
         layers={layers}
-        layerLoading={{ ships: shipsLoading }}
+        layerLoading={{ ships: shipsLoading, firms: firmsLoading, milFlights: milLoading, conflicts: conflictsLoading }}
         onLayerToggle={handleLayerToggle}
         mapTiles={mapTiles}
         onMapTilesChange={(t) => { audio.play('click'); setMapTiles(t); }}
@@ -465,6 +492,9 @@ function App() {
           earthquakes: earthquakes.length,
           cctv: cctvTotal,
           ships: ships.length,
+          firms: firmsHotspots.length,
+          milFlights: milFlights.length,
+          conflicts: conflictEvents.length,
         }}
       />
       <AudioToggle muted={audio.muted} onToggle={audio.toggleMute} isMobile={isMobile} />

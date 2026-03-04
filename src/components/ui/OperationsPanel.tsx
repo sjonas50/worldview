@@ -15,10 +15,13 @@ interface OperationsPanelProps {
     traffic: boolean;
     cctv: boolean;
     ships: boolean;
+    firms: boolean;
+    milFlights: boolean;
+    conflicts: boolean;
   };
-  onLayerToggle: (layer: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships') => void;
+  onLayerToggle: (layer: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships' | 'firms' | 'milFlights' | 'conflicts') => void;
   /** Optional per-layer loading state (e.g. ships takes ~20s on first fetch) */
-  layerLoading?: Partial<Record<'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships', boolean>>;
+  layerLoading?: Partial<Record<'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships' | 'firms' | 'milFlights' | 'conflicts', boolean>>;
   mapTiles: 'google' | 'osm';
   onMapTilesChange: (tile: 'google' | 'osm') => void;
   showPaths: boolean;
@@ -42,13 +45,16 @@ const SHADER_OPTIONS: { value: ShaderMode; label: string; colour: string }[] = [
   { value: 'flir', label: 'FLIR', colour: 'text-wv-amber' },
 ];
 
-const LAYER_OPTIONS: { key: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships'; label: string; icon: string }[] = [
+const LAYER_OPTIONS: { key: 'flights' | 'satellites' | 'earthquakes' | 'traffic' | 'cctv' | 'ships' | 'firms' | 'milFlights' | 'conflicts'; label: string; icon: string }[] = [
   { key: 'flights', label: 'LIVE FLIGHTS', icon: '✈' },
+  { key: 'milFlights', label: 'MIL FLIGHTS', icon: '🎖' },
   { key: 'satellites', label: 'SATELLITES', icon: '🛰' },
+  { key: 'ships', label: 'NAVAL / AIS', icon: '🚢' },
+  { key: 'firms', label: 'THERMAL / FIRMS', icon: '🔥' },
+  { key: 'conflicts', label: 'CONFLICT EVENTS', icon: '⚡' },
   { key: 'earthquakes', label: 'SEISMIC', icon: '🌍' },
   { key: 'traffic', label: 'STREET TRAFFIC', icon: '🚗' },
   { key: 'cctv', label: 'CCTV FEEDS', icon: '📹' },
-  { key: 'ships', label: 'NAVAL / AIS', icon: '🚢' },
 ];
 
 const ALTITUDE_BANDS: { band: AltitudeBand; label: string; colour: string; dotColour: string }[] = [
