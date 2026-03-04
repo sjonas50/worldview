@@ -44,12 +44,12 @@ async def lifespan(app: FastAPI):
         settings.falkordb_host, settings.falkordb_port, settings.falkordb_graph
     )
 
-    # Initialize schema (idempotent)
-    logger.info("Initializing schema constraints...")
+    # Initialize schema (idempotent) — indices must exist before constraints
+    logger.info("Initializing schema...")
+    initialize_indices(graph)
     create_constraints(
         settings.falkordb_host, settings.falkordb_port, settings.falkordb_graph
     )
-    initialize_indices(graph)
 
     # Seed location data
     logger.info("Seeding location data...")
