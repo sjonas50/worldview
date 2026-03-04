@@ -4,7 +4,7 @@
 
 WorldView is a real-time OSINT geospatial intelligence dashboard built on a 3D CesiumJS globe. It overlays 9 live data feeds — flights (commercial + military), satellites, ships, thermal anomalies, conflict events, earthquakes, traffic, and CCTV cameras — onto an interactive Earth visualisation with a tactical UI aesthetic.
 
-**Tech stack:** React 19 + TypeScript + Vite 7 + CesiumJS (via Resium) + Tailwind CSS v4 + Express 5 backend proxy + WebSocket.
+**Tech stack:** React 19 + TypeScript + Vite 7 + CesiumJS (via Resium) + Tailwind CSS v4 + Express 5 backend proxy + WebSocket + FalkorDB knowledge graph + FastAPI ingestion service.
 
 ## Repository Structure
 
@@ -59,6 +59,21 @@ worldview/
 │   │   └── postprocess.ts  # GLSL post-processing (CRT, NVG, FLIR)
 │   └── types/
 │       └── camera.ts       # CameraFeed, CameraSource, CameraMeta types
+├── ingestion/               # Python ingestion service (Phase 2)
+│   ├── Dockerfile           # Python 3.12 slim image
+│   ├── pyproject.toml       # FastAPI, FalkorDB, httpx, pydantic deps
+│   ├── .env                 # Ingestion service env vars (gitignored)
+│   └── src/worldview_ingestion/
+│       ├── main.py          # FastAPI app, lifespan, /health, /stats
+│       ├── config.py        # Pydantic Settings (env vars)
+│       ├── db.py            # FalkorDB connection manager
+│       ├── schema.py        # Cypher indices + constraints
+│       ├── models.py        # Pydantic data models
+│       ├── ingestors/
+│       │   └── mil_flights.py  # Military flight → graph writer
+│       └── seed/
+│           └── locations.py    # Airport, base, chokepoint seed data
+├── docker-compose.yml       # FalkorDB + ingestion service
 ├── public/                  # Static assets
 ├── .env                     # Client-side env vars (VITE_GOOGLE_API_KEY, VITE_CESIUM_ION_TOKEN, etc.)
 ├── package.json
@@ -94,6 +109,31 @@ npm run lint
 npm run preview
 ```
 
+## Phase 2 Services (FalkorDB + Ingestion)
+
+```bash
+# Start FalkorDB + ingestion service
+docker compose up -d
+
+# Start FalkorDB only (for local Python dev)
+docker compose up -d falkordb
+
+# View ingestion logs
+docker compose logs -f ingestion
+
+# FalkorDB Browser UI
+open http://localhost:3000
+
+# Ingestion health check
+curl http://localhost:8000/health
+
+# Graph stats
+curl http://localhost:8000/stats
+
+# Full dev workflow: backend + frontend + knowledge graph
+docker compose up -d && npm run dev:all
+```
+
 ## Environment Variables
 
 ### Client-side (`.env`)
@@ -112,6 +152,15 @@ npm run preview
 | `OPENSKY_CLIENT_SECRET` | OpenSky Network OAuth2 secret |
 | `NASA_FIRMS_MAP_KEY` | NASA FIRMS API key (free, register at firms.modaps.eosdis.nasa.gov) |
 | `AISSTREAM_API_KEY` | AISStream.io WebSocket API key (free tier) |
+
+### Ingestion service (`ingestion/.env`)
+| Variable | Purpose |
+|---|---|
+| `FALKORDB_HOST` | FalkorDB hostname (default: `falkordb` in Docker) |
+| `FALKORDB_PORT` | FalkorDB port (default: `6379`) |
+| `FALKORDB_GRAPH` | Graph name (default: `worldview_osint`) |
+| `BACKEND_URL` | Express backend URL (default: `http://host.docker.internal:3001`) |
+| `MIL_FLIGHT_POLL_INTERVAL` | Seconds between military flight polls (default: `15`) |
 
 ## Architecture Decisions
 

@@ -18,11 +18,23 @@ dist-ssr
 .env.*.local
 server/.env
 server/.env.local
+ingestion/.env
+ingestion/.env.local
 
 # Credential files
 credentials.json
 *.pem
 *.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+ingestion/.venv/
+*.egg-info/
+
+# Docker volumes
+falkordb_data/
 
 # Editor directories and files
 .vscode/*
