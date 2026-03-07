@@ -65,11 +65,16 @@ export function useFIRMS(enabled: boolean) {
         const highConf = data.filter((h) => h.confidence === 'h');
         if (data.length > 0 && Math.abs(data.length - prevCountRef.current) > 10) {
           prevCountRef.current = data.length;
+          // Pick the highest-FRP hotspot for fly-to location
+          const topHotspot = [...data].sort((a, b) => b.frp - a.frp)[0];
           const items: IntelFeedItem[] = [{
             id: `firms-${Date.now()}`,
             time: new Date().toISOString().slice(11, 19),
             type: 'firms',
             message: `${data.length} thermal anomalies detected (${highConf.length} high-conf)`,
+            latitude: topHotspot?.latitude,
+            longitude: topHotspot?.longitude,
+            priority: 'info' as const,
           }];
 
           // Flag any high-FRP nighttime hotspots as potential strike signatures
@@ -82,6 +87,9 @@ export function useFIRMS(enabled: boolean) {
               time: new Date().toISOString().slice(11, 19),
               type: 'firms',
               message: `⚠ ${potentialStrikes.length} high-FRP nighttime signature(s)`,
+              latitude: potentialStrikes[0].latitude,
+              longitude: potentialStrikes[0].longitude,
+              priority: 'critical' as const,
             });
           }
 

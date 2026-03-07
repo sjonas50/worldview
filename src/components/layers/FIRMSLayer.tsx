@@ -108,7 +108,7 @@ export default function FIRMSLayer({ hotspots, visible, isTracking }: FIRMSLayer
         outlineColor,
         outlineWidth: isPotentialStrike ? 3 : 1,
         scaleByDistance: new NearFarScalar(1e3, 2.0, 8e6, 0.4),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        disableDepthTestDistance: 0,
       });
 
       // Add a label for high-FRP potential strikes
@@ -139,7 +139,7 @@ export default function FIRMSLayer({ hotspots, visible, isTracking }: FIRMSLayer
           verticalOrigin: VerticalOrigin.CENTER,
           scale: 1.5,
           scaleByDistance: new NearFarScalar(1e3, 2.0, 5e6, 0.5),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          disableDepthTestDistance: 0,
         });
       }
     }

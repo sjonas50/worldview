@@ -19,9 +19,11 @@ from .db import get_graph
 from .schema import create_constraints, initialize_indices
 from .seed.locations import load_all_locations, seed_locations
 from .ingestors.mil_flights import ingest_mil_flights
+from .ingestors.flights import ingest_flights
 from .ingestors.firms import ingest_firms
 from .ingestors.gdelt import ingest_gdelt
 from .ingestors.vessels import ingest_vessels
+from .ingestors.earthquakes import ingest_earthquakes
 from .correlations.engine import run_correlations
 from .graphrag_service import GraphRAGService
 
@@ -134,6 +136,14 @@ async def lifespan(app: FastAPI):
                           settings.gdelt_poll_interval, graph_args, _locations)
         ),
         asyncio.create_task(
+            _run_periodic("earthquakes", ingest_earthquakes,
+                          settings.earthquake_poll_interval, graph_args, _locations)
+        ),
+        asyncio.create_task(
+            _run_periodic("flights", ingest_flights,
+                          settings.flight_poll_interval, graph_args, _locations)
+        ),
+        asyncio.create_task(
             _run_periodic("correlations", run_correlations,
                           settings.correlation_interval, graph_args, _locations)
         ),
@@ -150,9 +160,11 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"Started {len(tasks) - 1} ingestion loops + GraphRAG session cleaner "
         f"(mil={settings.mil_flight_poll_interval}s, "
+        f"flights={settings.flight_poll_interval}s, "
         f"vessels={settings.vessel_poll_interval}s, "
         f"firms={settings.firms_poll_interval}s, "
         f"gdelt={settings.gdelt_poll_interval}s, "
+        f"earthquakes={settings.earthquake_poll_interval}s, "
         f"correlations={settings.correlation_interval}s)"
     )
 
@@ -209,33 +221,39 @@ async def stats():
             """
             OPTIONAL MATCH (a:Aircraft)
             WITH count(a) AS aircraft
+            OPTIONAL MATCH (fl:Flight)
+            WITH aircraft, count(fl) AS flights
             OPTIONAL MATCH (l:Location)
-            WITH aircraft, count(l) AS locations
+            WITH aircraft, flights, count(l) AS locations
             OPTIONAL MATCH (o:Operator)
-            WITH aircraft, locations, count(o) AS operators
+            WITH aircraft, flights, locations, count(o) AS operators
             OPTIONAL MATCH (t:ThermalAnomaly)
-            WITH aircraft, locations, operators, count(t) AS hotspots
+            WITH aircraft, flights, locations, operators, count(t) AS hotspots
             OPTIONAL MATCH (c:ConflictEvent)
-            WITH aircraft, locations, operators, hotspots, count(c) AS events
+            WITH aircraft, flights, locations, operators, hotspots, count(c) AS events
             OPTIONAL MATCH (v:Vessel)
-            WITH aircraft, locations, operators, hotspots, events, count(v) AS vessels
+            WITH aircraft, flights, locations, operators, hotspots, events, count(v) AS vessels
+            OPTIONAL MATCH (e:Earthquake)
+            WITH aircraft, flights, locations, operators, hotspots, events, vessels, count(e) AS earthquakes
             OPTIONAL MATCH (ca:CorrelationAlert)
-            WITH aircraft, locations, operators, hotspots, events, vessels, count(ca) AS correlations
+            WITH aircraft, flights, locations, operators, hotspots, events, vessels, earthquakes, count(ca) AS correlations
             OPTIONAL MATCH (qa:QueryAudit)
-            RETURN aircraft, locations, operators, hotspots, events, vessels, correlations, count(qa) AS queries
+            RETURN aircraft, flights, locations, operators, hotspots, events, vessels, earthquakes, correlations, count(qa) AS queries
             """
         )
-        row = result.result_set[0] if result.result_set else [0] * 8
+        row = result.result_set[0] if result.result_set else [0] * 10
 
         return {
             "aircraft": row[0],
-            "locations": row[1],
-            "operators": row[2],
-            "hotspots": row[3],
-            "events": row[4],
-            "vessels": row[5],
-            "correlations": row[6],
-            "queries": row[7],
+            "flights": row[1],
+            "locations": row[2],
+            "operators": row[3],
+            "hotspots": row[4],
+            "events": row[5],
+            "vessels": row[6],
+            "earthquakes": row[7],
+            "correlations": row[8],
+            "queries": row[9],
         }
     except Exception as e:
         return {"error": str(e)}
@@ -379,6 +397,25 @@ async def get_timeline(
                 RETURN 'conflict' AS type, c.id AS id, c.name AS summary,
                        c.timestamp AS timestamp, c.eventType AS detail
                 ORDER BY c.timestamp DESC
+                LIMIT $limit
+                """,
+                {"since": since, "until": until, "limit": limit},
+            )
+            for row in result.result_set:
+                events.append({
+                    "type": row[0], "id": row[1], "summary": row[2],
+                    "timestamp": row[3], "detail": row[4],
+                })
+
+        # Earthquakes
+        if entity_type is None or entity_type == "earthquake":
+            result = graph.query(
+                """
+                MATCH (e:Earthquake)
+                WHERE e.time >= $since AND e.time <= $until
+                RETURN 'earthquake' AS type, e.id AS id, e.place AS summary,
+                       e.time AS timestamp, e.mag AS detail
+                ORDER BY e.time DESC
                 LIMIT $limit
                 """,
                 {"since": since, "until": until, "limit": limit},

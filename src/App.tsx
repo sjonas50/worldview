@@ -135,6 +135,12 @@ function App() {
     pitch: -45,
   });
 
+  // Timeline + trajectory trail state (must be before handleShowTrail)
+  const { events: timelineEvents, isLoading: timelineLoading, fetchTrajectory } = useTimeline(true);
+  const [trajectoryPoints, setTrajectoryPoints] = useState<import('./hooks/useTimeline').TrajectoryPoint[]>([]);
+  const [trajectoryLoading, setTrajectoryLoading] = useState(false);
+  const [trajectoryVisible, setTrajectoryVisible] = useState(false);
+
   // State: tracked entity (lock view)
   const [trackedEntity, setTrackedEntity] = useState<TrackedEntityInfo | null>(null);
   const cctvTrackEntityRef = useRef<CesiumEntity | null>(null);
@@ -238,13 +244,8 @@ function App() {
   const { events: conflictEvents, feedItems: conflictFeedItems, isLoading: conflictsLoading } = useConflictEvents(layers.conflicts);
   const { feedItems: corrFeedItems } = useCorrelationAlerts(true);
   const graphQuery = useGraphQuery();
-  const { events: timelineEvents, isLoading: timelineLoading, fetchTrajectory } = useTimeline(true);
   const [timelineVisible, setTimelineVisible] = useState(false);
 
-  // Trajectory trail state
-  const [trajectoryPoints, setTrajectoryPoints] = useState<import('./hooks/useTimeline').TrajectoryPoint[]>([]);
-  const [trajectoryLoading, setTrajectoryLoading] = useState(false);
-  const [trajectoryVisible, setTrajectoryVisible] = useState(false);
   const {
     cameras: cctvCameras,
     feedItems: cctvFeedItems,
@@ -378,7 +379,24 @@ function App() {
     // Clean up any previous CCTV tracking entity
     cleanupCctvEntity();
 
-    // Create a temporary Cesium Entity at the camera position for lock-on
+    // Fly to camera position using camera.flyTo instead of trackedEntity.
+    // trackedEntity at ellipsoid height 0 breaks for cities above sea level
+    // (e.g. SLC at ~1,300m) because the entity ends up underground.
+    const headingDeg = parseViewDirection(cam.viewDirection) ?? 160;
+    const DIST = 500; // metres from camera
+    const ALT = 300;  // metres above ground
+
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(cam.longitude, cam.latitude, ALT),
+      orientation: {
+        heading: CesiumMath.toRadians(headingDeg),
+        pitch: CesiumMath.toRadians(-30),
+        roll: 0,
+      },
+      duration: 2,
+    });
+
+    // Create a temporary entity for the tracking panel UI (not used for camera positioning)
     const entity = viewer.entities.add({
       position: Cartesian3.fromDegrees(cam.longitude, cam.latitude, 0),
       name: cam.name,
@@ -391,23 +409,7 @@ function App() {
       ].join('<br/>') as any,
     });
 
-    // Street-level viewFrom: close-in with optional heading match
-    // viewFrom is in the entity's local ENU frame (x=East, y=North, z=Up)
-    const ALT = 300;  // metres above ground
-    const DEFAULT_HDG = 160; // degrees — default viewing heading when camera has none
-    const DIST = 200; // metres behind the look-point
-    const headingDeg = parseViewDirection(cam.viewDirection) ?? DEFAULT_HDG;
-    const hRad = CesiumMath.toRadians(headingDeg);
-    entity.viewFrom = new Cartesian3(
-      -DIST * Math.sin(hRad), // east component (negative = behind heading)
-      -DIST * Math.cos(hRad), // north component
-      ALT,
-    ) as any;
-
     cctvTrackEntityRef.current = entity;
-
-    // Lock on — Cesium flies to and centres the entity
-    viewer.trackedEntity = entity;
 
     // Set React tracked-entity state for the tracking panel UI
     setTrackedEntity({
@@ -426,6 +428,29 @@ function App() {
   const handleFlyToCamera = useCallback((cam: CameraFeed) => {
     handleCctvLockOn(cam);
   }, [handleCctvLockOn]);
+
+  /** Handle fly-to from IntelFeed item click */
+  const handleFlyToFeedItem = useCallback((item: IntelFeedItem) => {
+    if (!item.latitude || !item.longitude) return;
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const altMap: Record<string, number> = {
+      seismic: 100_000,
+      firms: 50_000,
+      conflict: 200_000,
+      milflight: 15_000,
+    };
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(item.longitude, item.latitude, altMap[item.type] || 50_000),
+      orientation: {
+        heading: CesiumMath.toRadians(0),
+        pitch: CesiumMath.toRadians(-45),
+        roll: 0,
+      },
+      duration: 2,
+    });
+  }, []);
 
   /** Handle CCTV billboard click on the globe (from EntityClickHandler) */
   const handleCctvClickOnGlobe = useCallback((camData: any) => {
@@ -526,7 +551,20 @@ function App() {
       </GlobeViewer>
 
       {/* Tactical UI Overlay */}
-      <Crosshair />
+      <Crosshair
+        visible={!trackedEntity}
+        camera={camera}
+        dataStatus={{
+          flights: flights.length,
+          satellites: satellites.length,
+          earthquakes: earthquakes.length,
+          cctv: cctvTotal,
+          ships: ships.length,
+          firms: firmsHotspots.length,
+          milFlights: milFlights.length,
+          conflicts: conflictEvents.length,
+        }}
+      />
       <TrackedEntityPanel
         trackedEntity={trackedEntity}
         onShowTrail={handleShowTrail}
@@ -558,7 +596,7 @@ function App() {
         isMobile={isMobile}
         queryState={graphQuery}
       />
-      <IntelFeed items={allFeedItems} isMobile={isMobile} />
+      <IntelFeed items={allFeedItems} isMobile={isMobile} onFlyToItem={handleFlyToFeedItem} />
       {layers.cctv && (
         <CCTVPanel
           cameras={cctvCameras}

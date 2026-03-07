@@ -38,6 +38,16 @@ function formatAltitude(metres: number): string {
   return `${metres.toFixed(0)} m`;
 }
 
+/** Pulsing dot shown next to active feeds */
+function ActiveDot({ color = 'bg-wv-green' }: { color?: string }) {
+  return <span className={`inline-block w-1 h-1 rounded-full ${color} animate-pulse mr-1`} />;
+}
+
+/** Thin vertical divider between status groups */
+function Divider() {
+  return <span className="border-l border-wv-border/30 h-4 mx-1" />;
+}
+
 export default function StatusBar({ camera, shaderMode, dataStatus, isMobile = false }: StatusBarProps) {
   const [clock, setClock] = useState(new Date());
 
@@ -69,64 +79,90 @@ export default function StatusBar({ camera, shaderMode, dataStatus, isMobile = f
   }
 
   /* ── Desktop: full status bar ── */
-
   return (
     <div className="fixed bottom-0 left-0 right-0 h-8 panel-glass flex items-center justify-between px-4 text-[10px] text-wv-muted z-50 select-none">
-      {/* Left: Coordinates */}
-      <div className="flex gap-4">
+      {/* Left: Branding + Coordinates */}
+      <div className="flex items-center gap-2">
+        <span className="text-[8px] text-wv-gold/60 tracking-[0.3em] font-bold mr-2">WORLDVIEW</span>
+        <Divider />
         <span>
           LAT <span className="text-wv-cyan glow-cyan">{lat}</span>
         </span>
+        <Divider />
         <span>
           LON <span className="text-wv-cyan glow-cyan">{lon}</span>
         </span>
+        <Divider />
         <span>
           ALT <span className="text-wv-text">{alt}</span>
         </span>
+        <Divider />
         <span>
           HDG <span className="text-wv-text">{hdg}</span>
         </span>
       </div>
 
       {/* Centre: Clock */}
-      <div className="text-wv-green glow-green font-bold tracking-wider">
+      <div className="text-wv-green glow-green font-bold tracking-wider text-[11px] px-3 py-0.5 border border-wv-border/20 rounded">
         {utcTime}
       </div>
 
       {/* Right: Data feeds + shader */}
-      <div className="flex gap-4">
+      <div className="flex items-center gap-2">
         <span>
+          {dataStatus.flights > 0 && <ActiveDot />}
           ACFT <span className={dataStatus.flights > 0 ? 'text-wv-green' : 'text-wv-muted'}>{dataStatus.flights}</span>
         </span>
+        <Divider />
         <span>
+          {dataStatus.satellites > 0 && <ActiveDot />}
           SATS <span className={dataStatus.satellites > 0 ? 'text-wv-green' : 'text-wv-muted'}>{dataStatus.satellites}</span>
         </span>
+        <Divider />
         <span>
+          {dataStatus.earthquakes > 0 && <ActiveDot color="bg-wv-amber" />}
           SEIS <span className={dataStatus.earthquakes > 0 ? 'text-wv-amber' : 'text-wv-muted'}>{dataStatus.earthquakes}</span>
         </span>
+        <Divider />
         <span>
+          {dataStatus.cctv > 0 && <ActiveDot color="bg-wv-red" />}
           CCTV <span className={dataStatus.cctv > 0 ? 'text-wv-red' : 'text-wv-muted'}>{dataStatus.cctv}</span>
         </span>
+        <Divider />
         <span>
+          {dataStatus.ships > 0 && <ActiveDot color="bg-wv-cyan" />}
           AIS <span className={dataStatus.ships > 0 ? 'text-wv-cyan' : 'text-wv-muted'}>{dataStatus.ships}</span>
         </span>
         {(dataStatus.milFlights ?? 0) > 0 && (
-          <span>
-            MIL <span className="text-[#F44336]">{dataStatus.milFlights}</span>
-          </span>
+          <>
+            <Divider />
+            <span>
+              <ActiveDot color="bg-[#F44336]" />
+              MIL <span className="text-[#F44336]">{dataStatus.milFlights}</span>
+            </span>
+          </>
         )}
         {(dataStatus.firms ?? 0) > 0 && (
-          <span>
-            FIRMS <span className="text-[#FF6D00]">{dataStatus.firms}</span>
-          </span>
+          <>
+            <Divider />
+            <span>
+              <ActiveDot color="bg-[#FF6D00]" />
+              FIRMS <span className="text-[#FF6D00]">{dataStatus.firms}</span>
+            </span>
+          </>
         )}
         {(dataStatus.conflicts ?? 0) > 0 && (
-          <span>
-            GDELT <span className="text-[#FFD600]">{dataStatus.conflicts}</span>
-          </span>
+          <>
+            <Divider />
+            <span>
+              <ActiveDot color="bg-[#FFD600]" />
+              GDELT <span className="text-[#FFD600]">{dataStatus.conflicts}</span>
+            </span>
+          </>
         )}
-        <span className="border-l border-wv-border pl-4">
-          OPTICS <span className="text-wv-cyan uppercase">{shaderMode === 'none' ? 'STD' : shaderMode}</span>
+        <Divider />
+        <span>
+          OPTICS <span className="text-wv-gold uppercase">{shaderMode === 'none' ? 'STD' : shaderMode}</span>
         </span>
       </div>
     </div>

@@ -79,21 +79,25 @@ class GraphRAGService:
             # Domain context for Cypher generation and Q&A
             cypher_instruction = (
                 "You are querying a WorldView OSINT knowledge graph. "
-                "The graph contains ONLY these node types:\n"
+                "The graph contains these node types:\n"
                 "- Aircraft (military flights: hex, callsign, operator, isMilitary, isLADD, lastLat/Lon/Alt/Heading/Speed/Seen)\n"
+                "- Flight (commercial flights: icao24, callsign, registration, aircraftType, operator, airline, originAirport, destAirport, lastLat/Lon/Alt/Heading/Speed/Seen)\n"
                 "- Vessel (AIS ship tracking: mmsi, name, shipType, country, lastLat/Lon/Sog/Cog/Seen)\n"
+                "- Earthquake (USGS: id, mag, place, time, longitude, latitude, depth, type, status, tsunami, sig)\n"
                 "- ThermalAnomaly (NASA FIRMS hotspots: frp, brightness, confidence, daynight, acq_date/time)\n"
                 "- ConflictEvent (GDELT events: name, eventType, goldstein, tone, domain, sourceCountry)\n"
                 "- Location (291 seeded: airports, military bases, chokepoints, ports)\n"
                 "- Operator (military operators: name, type)\n"
                 "- CorrelationAlert (cross-layer correlations: ruleType, confidence, summary)\n"
                 "- QueryAudit (analyst query history)\n\n"
-                "Relationships: OBSERVED_AT (Aircraft/Vessel->Location with temporal edges), "
+                "Relationships: OBSERVED_AT (Aircraft/Flight/Vessel->Location with temporal edges), "
                 "OPERATED_BY (Aircraft->Operator), DETECTED_NEAR (ThermalAnomaly->Location), "
-                "REPORTED_NEAR (ConflictEvent->Location), PROXIMATE_TO (Aircraft->ThermalAnomaly), "
+                "REPORTED_NEAR (ConflictEvent->Location), OCCURRED_NEAR (Earthquake->Location), "
+                "PROXIMATE_TO (Aircraft->ThermalAnomaly), "
                 "CORRELATED_WITH (ThermalAnomaly->ConflictEvent).\n\n"
-                "IMPORTANT: Satellites, earthquakes, CCTV cameras, and traffic data are NOT in the graph. "
-                "If asked about these, explain they are rendered in the frontend only, not stored in the knowledge graph.\n"
+                "IMPORTANT: Satellites, CCTV cameras, and traffic data are NOT in the graph. "
+                "If asked about these, explain they are rendered in the frontend only.\n"
+                "When querying for 'flights' or 'aircraft near' a location, check BOTH Aircraft and Flight nodes.\n"
                 "Generate exactly ONE Cypher query. Never generate multiple queries.\n\n"
                 "Graph ontology:\n{ontology}"
             )
@@ -101,9 +105,10 @@ class GraphRAGService:
             qa_instruction = (
                 "You are an OSINT intelligence analyst assistant for the WorldView platform. "
                 "Answer questions based on the FalkorDB knowledge graph data. "
-                "The graph tracks: military aircraft (Airplanes.live), naval vessels (AISStream AIS), "
+                "The graph tracks: military aircraft (Airplanes.live), commercial flights (FR24/adsb.fi), "
+                "naval vessels (AISStream AIS), earthquakes (USGS), "
                 "NASA FIRMS thermal anomalies, GDELT conflict events, and cross-layer correlations.\n"
-                "Satellites, earthquakes, CCTV, and traffic are displayed on the globe but NOT stored "
+                "Satellites, CCTV, and traffic are displayed on the globe but NOT stored "
                 "in the knowledge graph — if asked, clarify this distinction.\n"
                 "Be concise and tactical in your responses."
             )
@@ -134,9 +139,8 @@ class GraphRAGService:
 
     # Data types NOT in the knowledge graph (frontend-only)
     # Note: "satellite" and "orbit" are handled by _check_satellite_pass_query()
+    # Note: Earthquakes and commercial flights are now ingested into the graph
     _NON_GRAPH_KEYWORDS = {
-        "earthquake": "Earthquake data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
-        "seismic": "Seismic data is fetched directly from USGS in the browser, not stored in the knowledge graph.",
         "cctv": "CCTV camera feeds are fetched directly from TfL/Austin/NSW APIs in the browser, not stored in the knowledge graph.",
         "camera": "CCTV camera data is fetched directly in the browser, not stored in the knowledge graph.",
         "traffic": "Traffic data is fetched from OpenStreetMap Overpass in the browser, not stored in the knowledge graph.",
@@ -364,13 +368,65 @@ class GraphRAGService:
             }
         except Exception as e:
             logger.error("GraphRAG query error: %s", e)
+            error_str = str(e).lower()
+
+            # Provide helpful fallback for common errors
+            if "no results" in error_str or "empty" in error_str:
+                fallback = self._empty_result_fallback(question)
+            elif "unknown" in error_str and "label" in error_str:
+                fallback = (
+                    "The query referenced a data type not yet in the graph. "
+                    "Available: Aircraft, Flight, Vessel, Earthquake, ThermalAnomaly, "
+                    "ConflictEvent, Location, Operator, CorrelationAlert."
+                )
+            else:
+                fallback = f"Query failed: {e}"
+
             return {
-                "answer": f"Query failed: {e}",
+                "answer": fallback,
                 "error": True,
                 "session_id": session_id,
                 "query": question,
                 "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
             }
+
+    def _empty_result_fallback(self, question: str) -> str:
+        """When a query returns empty results, check graph stats and suggest alternatives."""
+        try:
+            graph = get_graph(
+                self.settings.falkordb_host,
+                self.settings.falkordb_port,
+                self.settings.falkordb_graph,
+            )
+            result = graph.query(
+                """
+                OPTIONAL MATCH (a:Aircraft) WITH count(a) AS aircraft
+                OPTIONAL MATCH (fl:Flight) WITH aircraft, count(fl) AS flights
+                OPTIONAL MATCH (v:Vessel) WITH aircraft, flights, count(v) AS vessels
+                OPTIONAL MATCH (e:Earthquake) WITH aircraft, flights, vessels, count(e) AS earthquakes
+                OPTIONAL MATCH (t:ThermalAnomaly) WITH aircraft, flights, vessels, earthquakes, count(t) AS hotspots
+                OPTIONAL MATCH (c:ConflictEvent) WITH aircraft, flights, vessels, earthquakes, hotspots, count(c) AS events
+                RETURN aircraft, flights, vessels, earthquakes, hotspots, events
+                """
+            )
+            row = result.result_set[0] if result.result_set else [0] * 6
+            counts = {
+                "military aircraft": row[0],
+                "commercial flights": row[1],
+                "vessels": row[2],
+                "earthquakes": row[3],
+                "thermal anomalies": row[4],
+                "conflict events": row[5],
+            }
+            available = [f"{v} {k}" for k, v in counts.items() if v > 0]
+            if available:
+                return (
+                    f"No results found for your query. The graph currently contains: "
+                    f"{', '.join(available)}. Try rephrasing your question to query these data types."
+                )
+        except Exception:
+            pass
+        return "No results found. The data may not have been ingested yet — try again after a few minutes."
 
     def _record_provenance(self, query: str, answer: str, session_id: str):
         """Create a QueryAudit node for provenance tracking."""

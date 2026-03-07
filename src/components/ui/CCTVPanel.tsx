@@ -1,8 +1,9 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { CameraFeed, CameraCountry } from '../../types/camera';
 import MobileModal from './MobileModal';
 
 const IMAGE_PROXY = '/api/cctv/image';
+const REFRESH_INTERVAL = 10_000; // refresh live preview every 10s
 
 interface CCTVPanelProps {
   cameras: CameraFeed[];
@@ -92,6 +93,20 @@ export default function CCTVPanel({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [previewImgError, setPreviewImgError] = useState(false);
 
+  // Auto-refresh tick for live preview — cache-busts the proxy URL every 10s
+  const [refreshTick, setRefreshTick] = useState(0);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (selectedCameraId) {
+      refreshTimerRef.current = setInterval(() => setRefreshTick((t) => t + 1), REFRESH_INTERVAL);
+    }
+    return () => {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    };
+  }, [selectedCameraId]);
+
   // Derive selected camera from prop (single source of truth in App)
   const selectedCamera = useMemo(
     () => cameras.find((c) => c.id === selectedCameraId) ?? null,
@@ -113,6 +128,26 @@ export default function CCTVPanel({
     }
   }, [selectedCamera, onFlyToCamera, isMobile]);
 
+  // City / region filter (local to panel)
+  const [regionFilter, setRegionFilter] = useState('ALL');
+
+  const availableRegions = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const cam of cameras) {
+      const r = cam.region || 'Unknown';
+      counts[r] = (counts[r] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [cameras]);
+
+  // Reset region filter when country/cameras change
+  const filteredCameras = useMemo(() => {
+    if (regionFilter === 'ALL') return cameras;
+    return cameras.filter((c) => c.region === regionFilter);
+  }, [cameras, regionFilter]);
+
   // Paginate: show 30 cameras at a time for performance
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 30;
@@ -120,8 +155,8 @@ export default function CCTVPanel({
   // Reset page when filter changes
   const displayCameras = useMemo(() => {
     setPage(0);
-    return cameras;
-  }, [cameras]);
+    return filteredCameras;
+  }, [filteredCameras]);
 
   const pagedCameras = displayCameras.slice(0, (page + 1) * PAGE_SIZE);
   const hasMore = pagedCameras.length < displayCameras.length;
@@ -159,6 +194,38 @@ export default function CCTVPanel({
             </div>
           </div>
 
+          {/* City / Region Filter */}
+          {availableRegions.length > 1 && (
+            <div className="px-3 py-2 border-b border-wv-border shrink-0">
+              <div className="text-[8px] text-wv-muted tracking-widest uppercase mb-1.5">City / Region</div>
+              <div className="flex gap-1 flex-wrap">
+                <button
+                  onClick={() => setRegionFilter('ALL')}
+                  className={`px-2 py-1 rounded text-[9px] tracking-wider transition-all duration-200
+                    ${regionFilter === 'ALL'
+                      ? 'text-wv-cyan bg-white/10 ring-1 ring-wv-cyan/40'
+                      : 'text-wv-muted hover:text-wv-text hover:bg-white/5'
+                    }`}
+                >
+                  ALL
+                </button>
+                {availableRegions.map((r) => (
+                  <button
+                    key={r.name}
+                    onClick={() => setRegionFilter(r.name)}
+                    className={`px-2 py-1 rounded text-[9px] tracking-wider transition-all duration-200
+                      ${regionFilter === r.name
+                        ? 'text-wv-cyan bg-white/10 ring-1 ring-wv-cyan/40'
+                        : 'text-wv-muted hover:text-wv-text hover:bg-white/5'
+                      }`}
+                  >
+                    {r.name} <span className="text-[7px] opacity-60">{r.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Status Bar */}
           <div className="px-3 py-1.5 border-b border-wv-border flex items-center justify-between shrink-0">
             <span className="text-[9px] text-wv-muted tracking-wider">
@@ -183,12 +250,17 @@ export default function CCTVPanel({
                     </div>
                   ) : (
                     <img
-                      src={proxyUrl(selectedCamera.imageUrl)}
+                      src={`${proxyUrl(selectedCamera.imageUrl)}&_t=${refreshTick}`}
                       alt={selectedCamera.name}
                       onError={() => setPreviewImgError(true)}
                       className="w-full h-full object-cover"
                     />
                   )}
+                  {/* Live indicator */}
+                  <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/70">
+                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                    <span className="text-[8px] font-mono text-red-400 tracking-wider">LIVE</span>
+                  </div>
                 </div>
                 <div className="p-2 bg-wv-dark/80 space-y-0.5">
                   <div className="text-[10px] text-wv-text font-bold truncate">
@@ -290,15 +362,15 @@ export default function CCTVPanel({
 
   /* ── Desktop: fixed side panel — positioned below IntelFeed ── */
   return (
-    <div className="fixed top-80 right-4 w-80 panel-glass rounded-lg overflow-hidden z-40 select-none max-h-[calc(100vh-22rem)] flex flex-col">
+    <div className="fixed top-80 right-4 w-80 panel-glass panel-tactical rounded-lg overflow-hidden z-40 select-none max-h-[calc(100vh-22rem)] flex flex-col">
       {/* Header */}
       <div
-        className="px-3 py-2 border-b border-wv-border flex items-center justify-between cursor-pointer shrink-0"
+        className="px-3 py-2 border-b border-wv-border flex items-center justify-between cursor-pointer shrink-0 header-line"
         onClick={() => setVisible(!visible)}
       >
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-wv-red animate-pulse" />
-          <span className="text-[10px] text-wv-muted tracking-widest uppercase">CCTV Surveillance</span>
+          <span className="text-[10px] text-wv-gold/80 tracking-[0.2em] uppercase glow-gold">CCTV Surveillance</span>
         </div>
         <div className="flex items-center gap-2">
           {isLoading && (

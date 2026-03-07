@@ -8,8 +8,9 @@
   --color-wv-border: #2A2A2A;
   --color-wv-muted: #666666;
   --color-wv-text: #CCCCCC;
-  --color-wv-cyan: #00D4FF;
-  --color-wv-green: #39FF14;
+  --color-wv-cyan: #22D3EE;
+  --color-wv-green: #4ADE80;
+  --color-wv-gold: #D4A843;
   --color-wv-amber: #FF9500;
   --color-wv-red: #FF3B30;
   --color-wv-teal: #00BFA5;
@@ -76,22 +77,27 @@ html, body {
 
 /* Glow effects for tactical elements */
 .glow-cyan {
-  text-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
+  text-shadow: 0 0 8px rgba(34, 211, 238, 0.5);
 }
 
 .glow-green {
-  text-shadow: 0 0 8px rgba(57, 255, 20, 0.6);
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
 }
 
 .glow-amber {
-  text-shadow: 0 0 8px rgba(255, 149, 0, 0.6);
+  text-shadow: 0 0 8px rgba(255, 149, 0, 0.5);
+}
+
+.glow-gold {
+  text-shadow: 0 0 6px rgba(212, 168, 67, 0.4);
 }
 
 /* Panel glass effect */
 .panel-glass {
-  background: rgba(10, 10, 10, 0.85);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(42, 42, 42, 0.6);
+  background: rgba(8, 8, 12, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(34, 211, 238, 0.08);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 /* Scanline animation */
@@ -107,9 +113,70 @@ html, body {
   left: 0;
   right: 0;
   height: 2px;
-  background: rgba(0, 212, 255, 0.08);
+  background: rgba(34, 211, 238, 0.06);
   animation: scanline 8s linear infinite;
   pointer-events: none;
+}
+
+/* Tactical panel header with corner brackets */
+/* Note: no position:relative here — panels use position:fixed which
+   already establishes a containing block for ::before/::after. */
+.panel-tactical::before,
+.panel-tactical::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: rgba(34, 211, 238, 0.25);
+  pointer-events: none;
+  z-index: 1;
+}
+.panel-tactical::before {
+  top: 4px;
+  left: 4px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+.panel-tactical::after {
+  top: 4px;
+  right: 4px;
+  border-top: 1px solid;
+  border-right: 1px solid;
+}
+
+/* Animated header scan line */
+.header-line {
+  position: relative;
+  overflow: hidden;
+}
+@keyframes headerScan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+.header-line::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.3), transparent);
+  animation: headerScan 3s ease-in-out infinite;
+}
+
+/* Intel feed entry animation */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
 }
 
 /* Film grain overlay — rendered by <FilmGrain /> canvas component */

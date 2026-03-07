@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     vessel_poll_interval: int = 60
     firms_poll_interval: int = 300
     gdelt_poll_interval: int = 900
+    earthquake_poll_interval: int = 60
+    flight_poll_interval: int = 30
     correlation_interval: int = 60
 
     # GraphRAG LLM config

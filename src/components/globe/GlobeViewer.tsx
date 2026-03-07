@@ -57,7 +57,7 @@ const CONTEXT_OPTIONS = {
     preserveDrawingBuffer: true,
   },
 };
-const SCENE_BG_COLOR = new Color(0.04, 0.04, 0.04, 1.0);
+const SCENE_BG_COLOR = new Color(0.02, 0.02, 0.06, 1.0);
 
 /** Apply OpenStreetMap imagery to the viewer as a fallback */
 function applyOSM(viewer: CesiumViewer) {
@@ -146,10 +146,16 @@ export default function GlobeViewer({ shaderMode, mapTiles, onCameraChange, onVi
       globe.baseColor = Color.BLACK;
       globe.depthTestAgainstTerrain = true;
       globe.showGroundAtmosphere = true;
+      globe.atmosphereLightIntensity = 8.0;
       globe.translucency.enabled = false;
       globe.translucency.frontFaceAlpha = 1.0;
       globe.translucency.backFaceAlpha = 1.0;
     }
+
+    // Atmosphere & scene enhancements
+    viewer.scene.fog.density = 0.0002;
+    viewer.scene.skyAtmosphere.show = true;
+    viewer.scene.sun.show = false;
 
     // Only attempt Google tiles if mapTiles === 'google'
     if (mapTiles === 'google' && GOOGLE_API_KEY) {

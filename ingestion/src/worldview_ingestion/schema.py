@@ -29,6 +29,11 @@ def initialize_indices(graph) -> None:
         "CREATE INDEX ON :CorrelationAlert(ruleType)",
         "CREATE INDEX ON :QueryAudit(id)",
         "CREATE INDEX ON :QueryAudit(timestamp)",
+        "CREATE INDEX ON :Earthquake(id)",
+        "CREATE INDEX ON :Earthquake(time)",
+        "CREATE INDEX ON :Earthquake(mag)",
+        "CREATE INDEX ON :Flight(icao24)",
+        "CREATE INDEX ON :Flight(lastSeen)",
     ]
 
     for idx in indices:
@@ -59,6 +64,8 @@ def create_constraints(host: str, port: int, graph_name: str) -> None:
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Vessel PROPERTIES 1 mmsi",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE CorrelationAlert PROPERTIES 1 id",
         f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE QueryAudit PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Earthquake PROPERTIES 1 id",
+        f"GRAPH.CONSTRAINT CREATE {graph_name} UNIQUE NODE Flight PROPERTIES 1 icao24",
     ]
 
     for cmd in constraints:

@@ -96,7 +96,7 @@ export default function ConflictLayer({ events, visible, isTracking }: ConflictL
         outlineColor: Color.fromCssColorString(colorHex).withAlpha(0.3),
         outlineWidth: event.eventType === 'conflict' ? 2 : 1,
         scaleByDistance: new NearFarScalar(1e3, 1.5, 1e7, 0.3),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        disableDepthTestDistance: 0,
       });
     }
 

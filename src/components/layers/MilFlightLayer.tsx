@@ -172,7 +172,7 @@ export default function MilFlightLayer({ milFlights, visible, isTracking }: MilF
         verticalOrigin: VerticalOrigin.CENTER,
         scale: 1.0,
         scaleByDistance: new NearFarScalar(5e3, 1.5, 5e6, 0.4),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        disableDepthTestDistance: 0,
       });
     }
 

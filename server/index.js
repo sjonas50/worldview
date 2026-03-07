@@ -674,19 +674,31 @@ app.get('/api/firms', async (req, res) => {
       }
     }
 
-    // Fallback: FIRMS GeoJSON feed (last 24h, global, no key)
+    // Fallback: NASA open data CSV (last 24h, global, no key required)
     if (hotspots.length === 0) {
-      try {
-        const geoRes = await fetch(
-          'https://firms.modaps.eosdis.nasa.gov/api/area/csv/FIRMS_MAP_KEY_PLACEHOLDER/VIIRS_SNPP_NRT/world/1',
-          { headers: { 'User-Agent': 'WorldView-OSINT/1.0' } }
-        );
-        if (geoRes.ok) {
-          const csvText = await geoRes.text();
-          hotspots = parseFIRMSCsv(csvText);
+      const openUrls = [
+        'https://firms.modaps.eosdis.nasa.gov/data/active_fire/suomi-npp-viirs-c2/csv/SUOMI_VIIRS_C2_Global_24h.csv',
+        'https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_24h.csv',
+      ];
+      for (const url of openUrls) {
+        try {
+          const geoRes = await fetch(url, {
+            headers: { 'User-Agent': 'WorldView-OSINT/1.0' },
+          });
+          if (geoRes.ok) {
+            const csvText = await geoRes.text();
+            const parsed = parseFIRMSCsv(csvText);
+            if (parsed.length > 0) {
+              hotspots = parsed;
+              console.log(`[FIRMS] Fetched ${hotspots.length} hotspots from open data feed`);
+              break;
+            }
+          }
+        } catch {
+          // Try next URL
         }
-      } catch {
-        // If all FIRMS endpoints fail, return empty gracefully
+      }
+      if (hotspots.length === 0) {
         console.warn('[FIRMS] All endpoints failed, returning empty');
       }
     }
@@ -815,34 +827,162 @@ app.get('/api/flights/military', async (req, res) => {
 // ─── GDELT Conflict Events ──────────────────────────────────
 
 /**
- * GET /api/gdelt — Geolocated conflict/news events from GDELT.
+ * Parse a GDELT v2 Event export CSV row (tab-delimited, 61 columns).
+ * Returns a GeoJSON-compatible feature or null if no geo / not conflict-relevant.
+ *
+ * Verified column layout (0-indexed):
+ *   0: GlobalEventID, 1: Day, 26: EventCode, 28: EventRootCode,
+ *  30: GoldsteinScale, 34: AvgTone,
+ *  40: Actor1Geo_Lat, 41: Actor1Geo_Long,
+ *  48: Actor2Geo_Lat, 49: Actor2Geo_Long,
+ *  52: ActionGeo_FullName, 56: ActionGeo_Lat, 57: ActionGeo_Long,
+ *  59: DATEADDED, 60: SOURCEURL
+ */
+function parseGdeltRow(cols) {
+  // Prefer ActionGeo (where the event happened), fallback to Actor1Geo
+  let lat = parseFloat(cols[56]) || parseFloat(cols[40]) || 0;
+  let lon = parseFloat(cols[57]) || parseFloat(cols[41]) || 0;
+  if (!lat || !lon) return null;
+
+  const goldstein = parseFloat(cols[30]) || 0;
+  const tone = parseFloat(cols[34]) || 0;
+  const numArticles = parseInt(cols[27]) || 1;
+  const eventCode = cols[26] || '';
+  const rootCode = cols[28] || eventCode.slice(0, 2);
+  const sourceUrl = cols[60] || '';
+  const dateAdded = cols[59] || '';
+  const locationName = cols[52] || '';
+
+  // Filter: keep material conflict (CAMEO root 18,19,20 = assault, fight, mass violence)
+  // plus coercive actions (17), protests (14), and negative events (goldstein < -2)
+  const conflictRoots = ['14', '17', '18', '19', '20'];
+  const isConflictCode = conflictRoots.includes(rootCode);
+  const isNegativeTone = goldstein < -2;
+  if (!isConflictCode && !isNegativeTone) return null;
+
+  // Format dateAdded (YYYYMMDDHHmmSS) to ISO
+  let isoDate = new Date().toISOString();
+  if (dateAdded.length >= 8) {
+    const y = dateAdded.slice(0, 4);
+    const m = dateAdded.slice(4, 6);
+    const d = dateAdded.slice(6, 8);
+    const h = dateAdded.slice(8, 10) || '00';
+    const min = dateAdded.slice(10, 12) || '00';
+    const s = dateAdded.slice(12, 14) || '00';
+    isoDate = `${y}-${m}-${d}T${h}:${min}:${s}Z`;
+  }
+
+  return {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [lon, lat] },
+    properties: {
+      name: locationName || `Event ${cols[0]}`,
+      url: sourceUrl,
+      goldstein,
+      tone,
+      domain: (() => { try { return sourceUrl ? new URL(sourceUrl).hostname : ''; } catch { return ''; } })(),
+      sourcecountry: cols[53] || '',
+      dateadded: isoDate,
+      eventcode: eventCode,
+      numarticles: numArticles,
+      shareimage: '',
+    },
+  };
+}
+
+/**
+ * Fetch the latest GDELT v2 export CSV, parse conflict events, return GeoJSON.
+ * GDELT publishes new CSVs every 15 minutes at a predictable URL.
+ */
+async function fetchGdeltEvents() {
+  // Step 1: Get the latest export URL from the lastupdate file
+  const lastUpdateRes = await fetch('http://data.gdeltproject.org/gdeltv2/lastupdate.txt', {
+    headers: { 'User-Agent': 'WorldView-OSINT/1.0' },
+  });
+  if (!lastUpdateRes.ok) throw new Error(`GDELT lastupdate HTTP ${lastUpdateRes.status}`);
+  const lastUpdateText = await lastUpdateRes.text();
+
+  // Find the .export.CSV.zip line
+  const exportLine = lastUpdateText.split('\n').find((l) => l.includes('.export.CSV.zip'));
+  if (!exportLine) throw new Error('No export CSV found in lastupdate');
+
+  const exportUrl = exportLine.trim().split(' ').pop();
+  if (!exportUrl) throw new Error('Failed to parse export URL');
+
+  // Step 2: Fetch and decompress the ZIP
+  const { default: { Readable } } = await import('stream');
+  const zipRes = await fetch(exportUrl, {
+    headers: { 'User-Agent': 'WorldView-OSINT/1.0' },
+  });
+  if (!zipRes.ok) throw new Error(`GDELT export HTTP ${zipRes.status}`);
+
+  const arrayBuf = await zipRes.arrayBuffer();
+  const buf = Buffer.from(arrayBuf);
+
+  // Decompress ZIP — the export CSV is a single-entry ZIP
+  // Use built-in zlib to inflate the deflated data inside the ZIP
+  const { createInflateRaw } = await import('zlib');
+
+  // Find the local file header in the ZIP and extract deflated data
+  // ZIP local file header: PK\x03\x04 ...
+  const localHeaderSig = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const headerIdx = buf.indexOf(localHeaderSig);
+  if (headerIdx < 0) throw new Error('Invalid ZIP file');
+
+  const compMethod = buf.readUInt16LE(headerIdx + 8);
+  const compSize = buf.readUInt32LE(headerIdx + 18);
+  const fnameLen = buf.readUInt16LE(headerIdx + 26);
+  const extraLen = buf.readUInt16LE(headerIdx + 28);
+  const dataStart = headerIdx + 30 + fnameLen + extraLen;
+
+  let csvText;
+  if (compMethod === 0) {
+    // Stored (no compression)
+    csvText = buf.slice(dataStart, dataStart + compSize).toString('utf-8');
+  } else {
+    // Deflated
+    csvText = await new Promise((resolve, reject) => {
+      const compressed = buf.slice(dataStart, dataStart + compSize);
+      const inflate = createInflateRaw();
+      const chunks = [];
+      inflate.on('data', (c) => chunks.push(c));
+      inflate.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      inflate.on('error', reject);
+      inflate.end(compressed);
+    });
+  }
+
+  // Step 3: Parse CSV rows into GeoJSON features
+  const lines = csvText.split('\n');
+  const features = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cols = line.split('\t');
+    if (cols.length < 58) continue;
+    const feature = parseGdeltRow(cols);
+    if (feature) features.push(feature);
+  }
+
+  // Sort by goldstein (most negative/hostile first), limit to 500
+  features.sort((a, b) => a.properties.goldstein - b.properties.goldstein);
+  const limited = features.slice(0, 500);
+
+  return { type: 'FeatureCollection', features: limited };
+}
+
+/**
+ * GET /api/gdelt — Geolocated conflict events from GDELT v2 event exports.
  * No API key required. Updated every 15 minutes.
  * Returns GeoJSON features with tone, Goldstein scale, and source metadata.
- *
- * Query params:
- *   ?query=iran          — filter by keyword (default: conflict themes)
- *   ?timespan=24h        — time window (default: 24h)
- *   ?maxpoints=500       — max results (default: 500)
  */
 app.get('/api/gdelt', async (req, res) => {
   try {
     const cached = cache.get('gdelt');
     if (cached) return res.json(cached);
 
-    const query = req.query.query || 'conflict OR military OR strike OR missile';
-    const timespan = req.query.timespan || '24h';
-    const maxpoints = Math.min(parseInt(req.query.maxpoints) || 500, 2000);
+    const data = await fetchGdeltEvents();
 
-    const gdeltUrl = `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=pointdata&format=GeoJSON&timespan=${timespan}&maxpoints=${maxpoints}&sortby=ToneDesc`;
-
-    const gdeltRes = await fetch(gdeltUrl, {
-      headers: { 'User-Agent': 'WorldView-OSINT/1.0 (educational project)' },
-    });
-
-    if (!gdeltRes.ok) throw new Error(`GDELT HTTP ${gdeltRes.status}`);
-    const data = await gdeltRes.json();
-
-    console.log(`[GDELT] Fetched ${(data.features || []).length} geolocated events`);
+    console.log(`[GDELT] Fetched ${data.features.length} geolocated conflict events from v2 export`);
     cache.set('gdelt', data, 900); // Cache 15 minutes (GDELT update cycle)
     res.json(data);
   } catch (err) {

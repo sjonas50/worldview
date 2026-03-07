@@ -45,6 +45,9 @@ export function useEarthquakes(enabled: boolean) {
         time: new Date(q.time).toISOString().slice(11, 19),
         type: 'seismic' as const,
         message: `M${q.mag.toFixed(1)} — ${q.place}`,
+        latitude: q.latitude,
+        longitude: q.longitude,
+        priority: q.mag >= 6 ? 'critical' as const : 'high' as const,
       }));
       setFeedItems(newFeed);
     } catch (err) {

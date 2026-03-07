@@ -79,6 +79,7 @@ export function useMilFlights(enabled: boolean) {
             time: new Date().toISOString().slice(11, 19),
             type: 'milflight',
             message: `${data.length} military aircraft tracked${laddCount > 0 ? ` (${laddCount} LADD)` : ''}`,
+            priority: 'info' as const,
           }];
 
           // Flag emergency squawks
@@ -89,6 +90,9 @@ export function useMilFlights(enabled: boolean) {
               time: new Date().toISOString().slice(11, 19),
               type: 'milflight',
               message: `⚠ ${emergencies.length} military emergency squawk(s)`,
+              latitude: emergencies[0].latitude,
+              longitude: emergencies[0].longitude,
+              priority: 'critical' as const,
             });
           }
 

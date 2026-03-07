@@ -109,7 +109,7 @@ export default function OperationsPanel({
     <>
       {/* Optics Section */}
       <div className="p-3 border-b border-wv-border">
-        <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Optics Mode</div>
+        <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Optics Mode</div>
         <div className="grid grid-cols-2 gap-1">
           {SHADER_OPTIONS.map(({ value, label, colour }) => (
             <button
@@ -133,7 +133,7 @@ export default function OperationsPanel({
 
       {/* Map Tiles Section */}
       <div className="p-3 border-b border-wv-border">
-        <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Map Tiles</div>
+        <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Map Tiles</div>
         <div className="grid grid-cols-2 gap-1">
           {([
             { value: 'google' as const, label: 'GOOGLE 3D', colour: 'text-wv-cyan' },
@@ -160,7 +160,7 @@ export default function OperationsPanel({
 
       {/* Satellite Imagery Section */}
       <div className="p-3 border-b border-wv-border">
-        <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Satellite Imagery</div>
+        <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Satellite Imagery</div>
         <div className="flex flex-col gap-1">
           {([
             { key: 'trueColor' as const, label: 'VIIRS TRUE COLOR', icon: '🛰' },
@@ -195,7 +195,7 @@ export default function OperationsPanel({
 
       {/* Data Layers Section */}
       <div className="p-3 border-b border-wv-border">
-        <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Data Layers</div>
+        <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Data Layers</div>
         <div className="flex flex-col gap-1">
           {LAYER_OPTIONS.map(({ key, label, icon }) => {
             const isOn = layers[key];
@@ -233,7 +233,7 @@ export default function OperationsPanel({
       {/* Flight Filters Section */}
       {layers.flights && (
         <div className="p-3">
-          <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Flight Filters</div>
+          <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Flight Filters</div>
           <button
             onClick={onShowPathsToggle}
             className={`
@@ -277,7 +277,7 @@ export default function OperationsPanel({
       {/* Satellite Filters Section */}
       {layers.satellites && (
         <div className="p-3 border-t border-wv-border">
-          <div className="text-[9px] text-wv-muted tracking-widest uppercase mb-2">Satellite Filters</div>
+          <div className="text-[8px] text-wv-gold/80 tracking-[0.2em] uppercase mb-2">Satellite Filters</div>
           <button
             onClick={onShowSatPathsToggle}
             className={`
@@ -396,11 +396,11 @@ export default function OperationsPanel({
 
   /* ── Desktop: fixed side panel (unchanged) ── */
   return (
-    <div className="fixed top-4 left-4 w-56 panel-glass rounded-lg overflow-hidden z-40 select-none max-h-[calc(100vh-2rem)] overflow-y-auto">
+    <div className="fixed top-4 left-4 w-56 panel-glass panel-tactical rounded-lg overflow-hidden z-40 select-none max-h-[calc(100vh-2rem)] overflow-y-auto">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-wv-border flex items-center gap-2">
+      <div className="px-3 py-2 border-b border-wv-border flex items-center gap-2 header-line">
         <div className="w-2 h-2 rounded-full bg-wv-green animate-pulse" />
-        <span className="text-[10px] text-wv-muted tracking-widest uppercase">Operations</span>
+        <span className="text-[10px] text-wv-gold/80 tracking-[0.2em] uppercase glow-gold">Operations</span>
       </div>
       {panelContent}
     </div>

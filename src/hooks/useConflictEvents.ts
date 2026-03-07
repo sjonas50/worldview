@@ -98,15 +98,19 @@ export function useConflictEvents(enabled: boolean) {
 
         setEvents(parsed);
 
-        // Intel feed
+        // Intel feed — attach location of most critical event for fly-to
         const conflictCount = parsed.filter((e) => e.eventType === 'conflict').length;
         if (parsed.length > 0 && Math.abs(parsed.length - prevCountRef.current) > 5) {
           prevCountRef.current = parsed.length;
+          const mostCritical = parsed[0]; // Already sorted by most negative Goldstein
           setFeedItems([{
             id: `gdelt-${Date.now()}`,
             time: new Date().toISOString().slice(11, 19),
             type: 'conflict',
             message: `${parsed.length} geolocated events (${conflictCount} conflict-flagged)`,
+            latitude: mostCritical?.latitude,
+            longitude: mostCritical?.longitude,
+            priority: 'high' as const,
           }]);
         }
 
